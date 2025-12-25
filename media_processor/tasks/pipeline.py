@@ -335,28 +335,28 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
 
     # 构建滤镜链
     filter_parts = []
+    video_label = "0:v"
 
     if use_logo:
         # 计算 logo 大小（视频宽度的 1/4）
         logo_target_width = int(width / 4) if aspect_ratio > 1 else int(height / 4)
         # logo 缩放 + 透明度
-        filter_parts.append(f"[1]format=rgba,colorchannelmixer=aa=0.9,scale={logo_target_width}:-1[logo]")
+        filter_parts.append(f"[1:v]format=rgba,colorchannelmixer=aa=0.9,scale={logo_target_width}:-1[logo]")
         # 叠加 logo（右上角）
-        filter_parts.append(f"[0][logo]overlay=W-w-15:15[v1]")
-        video_input = "[v1]"
-    else:
-        video_input = "[0]"
+        filter_parts.append(f"[{video_label}][logo]overlay=W-w-15:15[v1]")
+        video_label = "v1"
 
     # 字幕滤镜
     if subtitle_path and os.path.exists(subtitle_path):
         escaped_path = subtitle_path.replace("'", "'\\''").replace(":", "\\:")
-        filter_parts.append(f"{video_input}ass='{escaped_path}'[v2]")
-        video_input = "[v2]"
+        filter_parts.append(f"[{video_label}]ass='{escaped_path}'[v2]")
+        video_label = "v2"
 
-    # 缩放滤镜
-    filter_parts.append(f"{video_input}scale='min({max_width},iw)':-2")
+    # 缩放滤镜（最后一个滤镜不需要输出标签）
+    filter_parts.append(f"[{video_label}]scale='min({max_width},iw)':-2")
 
-    filter_complex = ",".join(filter_parts) if len(filter_parts) == 1 else ";".join(filter_parts[:-1]) + "," + filter_parts[-1].split("]")[-1]
+    # 用分号连接所有滤镜
+    filter_complex = ";".join(filter_parts)
 
     # 如果有多个滤镜需要用 filter_complex，否则用 vf
     if use_logo or (subtitle_path and os.path.exists(subtitle_path)):
