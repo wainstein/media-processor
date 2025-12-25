@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Processor - 测试控制台</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --accent: #0f3460;
+            --primary: #e94560;
+            --text: #eaeaea;
+            --text-muted: #a0a0a0;
+            --success: #00d26a;
+            --warning: #f5a623;
+            --error: #e94560;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--primary), #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        header p {
+            color: var(--text-muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid var(--accent);
+        }
+
+        .card h2 {
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card h2 .icon {
+            font-size: 1.5em;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        input[type="text"], input[type="url"], select {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--accent);
+            border: 1px solid transparent;
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--primary);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #ff6b6b;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: var(--accent);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: #1a3a5c;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+
+        .status-indicator.healthy {
+            background: rgba(0, 210, 106, 0.2);
+            color: var(--success);
+        }
+
+        .status-indicator.unhealthy {
+            background: rgba(233, 69, 96, 0.2);
+            color: var(--error);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .healthy .status-dot {
+            background: var(--success);
+        }
+
+        .unhealthy .status-dot {
+            background: var(--error);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .task-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .task-item {
+            background: var(--accent);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .task-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .task-id {
+            font-family: monospace;
+            font-size: 0.85em;
+            color: var(--text-muted);
+        }
+
+        .task-status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .task-status.queued {
+            background: rgba(245, 166, 35, 0.2);
+            color: var(--warning);
+        }
+
+        .task-status.processing {
+            background: rgba(0, 122, 255, 0.2);
+            color: #007aff;
+        }
+
+        .task-status.completed {
+            background: rgba(0, 210, 106, 0.2);
+            color: var(--success);
+        }
+
+        .task-status.failed {
+            background: rgba(233, 69, 96, 0.2);
+            color: var(--error);
+        }
+
+        .task-url {
+            font-size: 0.9em;
+            word-break: break-all;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: var(--bg-color);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), #ff6b6b);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .task-stage {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+
+        .task-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .task-actions .btn {
+            padding: 8px 16px;
+            font-size: 0.85em;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            background: var(--accent);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .log-output {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: monospace;
+            font-size: 0.85em;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .log-entry.info { color: #58a6ff; }
+        .log-entry.success { color: var(--success); }
+        .log-entry.error { color: var(--error); }
+        .log-entry.warning { color: var(--warning); }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        .empty-state .icon {
+            font-size: 3em;
+            margin-bottom: 16px;
+        }
+
+        .api-url-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .api-url-input input {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Media Processor</h1>
+            <p>视频下载、转录、翻译、编码微服务测试控制台</p>
+        </header>
+
+        <div class="api-url-input">
+            <input type="text" id="apiUrl" value="http://192.168.2.123:8000" placeholder="API 地址">
+            <button class="btn btn-secondary" onclick="checkHealth()">检查连接</button>
+            <span id="healthStatus" class="status-indicator unhealthy">
+                <span class="status-dot"></span>
+                <span>未连接</span>
+            </span>
+        </div>
+
+        <div class="grid">
+            <!-- 提交任务 -->
+            <div class="card">
+                <h2><span class="icon">📤</span> 提交任务</h2>
+
+                <div class="form-group">
+                    <label>视频 URL</label>
+                    <input type="url" id="videoUrl" placeholder="YouTube, Twitter, Instagram 等视频链接">
+                </div>
+
+                <div class="form-group">
+                    <label>处理选项</label>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="optTranslate" checked>
+                        <label for="optTranslate" style="margin: 0;">翻译字幕</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="optEmbed" checked>
+                        <label for="optEmbed" style="margin: 0;">嵌入字幕到视频</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>目标语言</label>
+                    <select id="targetLang">
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                        <option value="ja">日本語</option>
+                        <option value="ko">한국어</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>视频质量</label>
+                    <select id="videoQuality">
+                        <option value="500k">低质量 (500kbps)</option>
+                        <option value="1000k">中等质量 (1Mbps)</option>
+                        <option value="2000k">高质量 (2Mbps)</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" onclick="submitTask()" id="submitBtn">
+                    <span>🚀</span> 提交任务
+                </button>
+            </div>
+
+            <!-- 系统状态 -->
+            <div class="card">
+                <h2><span class="icon">📊</span> 系统状态</h2>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="statWorkers">-</div>
+                        <div class="stat-label">Workers</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statActive">-</div>
+                        <div class="stat-label">活动任务</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statTotal">-</div>
+                        <div class="stat-label">总任务数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statCompleted">-</div>
+                        <div class="stat-label">已完成</div>
+                    </div>
+                </div>
+
+                <h3 style="margin-bottom: 12px; font-size: 1em; color: var(--text-muted);">活动日志</h3>
+                <div class="log-output" id="logOutput">
+                    <div class="log-entry info">[系统] 等待连接...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务列表 -->
+        <div class="card" style="margin-top: 20px;">
+            <h2><span class="icon">📋</span> 任务列表</h2>
+
+            <div class="task-list" id="taskList">
+                <div class="empty-state">
+                    <div class="icon">📭</div>
+                    <p>暂无任务</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        let API_URL = document.getElementById('apiUrl').value;
+        const tasks = new Map();
+        let pollInterval = null;
+        let statsInterval = null;
+        let totalTasks = 0;
+        let completedTasks = 0;
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const logOutput = document.getElementById('logOutput');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${time}] ${message}`;
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+
+            // 保持最多 100 条日志
+            while (logOutput.children.length > 100) {
+                logOutput.removeChild(logOutput.firstChild);
+            }
+        }
+
+        // 检查健康状态
+        async function checkHealth() {
+            API_URL = document.getElementById('apiUrl').value;
+            const statusEl = document.getElementById('healthStatus');
+
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+
+                if (data.status === 'healthy') {
+                    statusEl.className = 'status-indicator healthy';
+                    statusEl.innerHTML = '<span class="status-dot"></span><span>已连接</span>';
+
+                    document.getElementById('statWorkers').textContent = data.workers || 0;
+                    document.getElementById('statActive').textContent = data.active_tasks || 0;
+
+                    log(`连接成功 - Workers: ${data.workers}, 活动任务: ${data.active_tasks}`, 'success');
+
+                    // 开始轮询
+                    if (!pollInterval) {
+                        pollInterval = setInterval(pollTasks, 2000);
+                    }
+                    if (!statsInterval) {
+                        statsInterval = setInterval(updateStats, 5000);
+                    }
+                } else {
+                    throw new Error('服务状态异常');
+                }
+            } catch (error) {
+                statusEl.className = 'status-indicator unhealthy';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>连接失败</span>';
+                log(`连接失败: ${error.message}`, 'error');
+
+                document.getElementById('statWorkers').textContent = '-';
+                document.getElementById('statActive').textContent = '-';
+            }
+        }
+
+        // 更新统计
+        async function updateStats() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+
+                document.getElementById('statWorkers').textContent = data.workers || 0;
+                document.getElementById('statActive').textContent = data.active_tasks || 0;
+                document.getElementById('statTotal').textContent = totalTasks;
+                document.getElementById('statCompleted').textContent = completedTasks;
+            } catch (error) {
+                // 静默失败
+            }
+        }
+
+        // 提交任务
+        async function submitTask() {
+            const url = document.getElementById('videoUrl').value.trim();
+            if (!url) {
+                log('请输入视频 URL', 'warning');
+                return;
+            }
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>⏳</span> 提交中...';
+
+            const options = {
+                translate: document.getElementById('optTranslate').checked,
+                target_language: document.getElementById('targetLang').value,
+                embed_subtitles: document.getElementById('optEmbed').checked,
+                video_bitrate: document.getElementById('videoQuality').value
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/api/tasks`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: url,
+                        options: options
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    log(`任务已提交: ${data.task_id}`, 'success');
+                    tasks.set(data.task_id, {
+                        ...data,
+                        url: url
+                    });
+                    totalTasks++;
+                    renderTasks();
+                    document.getElementById('videoUrl').value = '';
+                } else {
+                    throw new Error(data.detail || '提交失败');
+                }
+            } catch (error) {
+                log(`提交失败: ${error.message}`, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>🚀</span> 提交任务';
+            }
+        }
+
+        // 轮询任务状态
+        async function pollTasks() {
+            for (const [taskId, task] of tasks) {
+                if (task.status === 'completed' || task.status === 'failed') {
+                    continue;
+                }
+
+                try {
+                    const response = await fetch(`${API_URL}/api/tasks/${taskId}`);
+                    const data = await response.json();
+
+                    const oldStatus = task.status;
+                    tasks.set(taskId, { ...task, ...data });
+
+                    if (data.status !== oldStatus) {
+                        if (data.status === 'completed') {
+                            log(`任务完成: ${taskId.substring(0, 8)}...`, 'success');
+                            completedTasks++;
+                        } else if (data.status === 'failed') {
+                            log(`任务失败: ${taskId.substring(0, 8)}... - ${data.error}`, 'error');
+                        } else if (data.stage) {
+                            log(`任务 ${taskId.substring(0, 8)}... 阶段: ${data.stage}`, 'info');
+                        }
+                        renderTasks();
+                    }
+                } catch (error) {
+                    // 静默失败
+                }
+            }
+        }
+
+        // 渲染任务列表
+        function renderTasks() {
+            const taskList = document.getElementById('taskList');
+
+            if (tasks.size === 0) {
+                taskList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">📭</div>
+                        <p>暂无任务</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            const sortedTasks = [...tasks.entries()].reverse();
+
+            for (const [taskId, task] of sortedTasks) {
+                const stageText = {
+                    'pending': '等待中',
+                    'downloading': '下载中',
+                    'transcribing': '转录中',
+                    'translating': '翻译中',
+                    'encoding': '编码中',
+                    'done': '完成'
+                }[task.stage] || task.stage || '-';
+
+                const statusClass = {
+                    'queued': 'queued',
+                    'processing': 'processing',
+                    'completed': 'completed',
+                    'failed': 'failed'
+                }[task.status] || 'queued';
+
+                const statusText = {
+                    'queued': '排队中',
+                    'processing': '处理中',
+                    'completed': '已完成',
+                    'failed': '失败'
+                }[task.status] || task.status;
+
+                const progress = task.progress || 0;
+
+                html += `
+                    <div class="task-item">
+                        <div class="task-header">
+                            <span class="task-id">${taskId}</span>
+                            <span class="task-status ${statusClass}">${statusText}</span>
+                        </div>
+                        <div class="task-url">${task.url || '-'}</div>
+                        ${task.status === 'processing' ? `
+                            <div class="task-stage">阶段: ${stageText}</div>
+                            <div class="progress-bar">
+                                <div class="progress-bar-fill" style="width: ${progress}%"></div>
+                            </div>
+                        ` : ''}
+                        ${task.status === 'failed' ? `
+                            <div class="task-stage" style="color: var(--error);">错误: ${task.error || '未知错误'}</div>
+                        ` : ''}
+                        ${task.status === 'completed' ? `
+                            <div class="task-actions">
+                                <button class="btn btn-primary" onclick="downloadVideo('${taskId}')">
+                                    <span>📥</span> 下载视频
+                                </button>
+                                <button class="btn btn-secondary" onclick="downloadSubtitle('${taskId}')">
+                                    <span>📝</span> 下载字幕
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+            taskList.innerHTML = html;
+        }
+
+        // 下载视频
+        function downloadVideo(taskId) {
+            window.open(`${API_URL}/api/tasks/${taskId}/download`, '_blank');
+            log(`开始下载视频: ${taskId.substring(0, 8)}...`, 'info');
+        }
+
+        // 下载字幕
+        function downloadSubtitle(taskId) {
+            window.open(`${API_URL}/api/tasks/${taskId}/subtitle`, '_blank');
+            log(`开始下载字幕: ${taskId.substring(0, 8)}...`, 'info');
+        }
+
+        // 初始化
+        window.onload = function() {
+            document.getElementById('statTotal').textContent = '0';
+            document.getElementById('statCompleted').textContent = '0';
+            checkHealth();
+        };
+
+        // 回车提交
+        document.getElementById('videoUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                submitTask();
+            }
+        });
+    </script>
+</body>
+</html>
