@@ -245,7 +245,7 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
 
 
 def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
-               video_bitrate: str = "500k", max_width: int = 720) -> dict:
+               video_bitrate: str = "500k", max_width: int = 720, embed_logo: bool = True) -> dict:
     """直接执行编码（绕过 Celery）"""
     import subprocess
     import tempfile
@@ -277,17 +277,70 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
     is_apple = platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
     video_codec = "h264_videotoolbox" if is_apple else "libx264"
 
-    # 构建 ffmpeg 命令
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-    ]
+    # 获取视频尺寸用于 logo 计算
+    width, height = 1280, 720
+    try:
+        probe_cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+            video_path
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
+        if probe_result.returncode == 0 and probe_result.stdout.strip():
+            parts = probe_result.stdout.strip().split(",")
+            if len(parts) >= 2:
+                width, height = int(parts[0]), int(parts[1])
+    except:
+        pass
 
-    # 嵌入字幕
+    aspect_ratio = width / height if height > 0 else 1.78
+
+    # Logo 路径（在项目根目录的 assets 文件夹）
+    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    logo_path = os.path.join(script_dir, "assets", "logo.png")
+    use_logo = embed_logo and os.path.exists(logo_path)
+
+    if use_logo:
+        logger.info(f"[{task_id}] 使用 logo: {logo_path}")
+    elif embed_logo:
+        logger.warning(f"[{task_id}] Logo 文件不存在: {logo_path}")
+
+    # 构建 ffmpeg 命令
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+
+    if use_logo:
+        cmd.extend(["-i", logo_path])
+
+    # 构建滤镜链
+    filter_parts = []
+
+    if use_logo:
+        # 计算 logo 大小（视频宽度的 1/4）
+        logo_target_width = int(width / 4) if aspect_ratio > 1 else int(height / 4)
+        # logo 缩放 + 透明度
+        filter_parts.append(f"[1]format=rgba,colorchannelmixer=aa=0.9,scale={logo_target_width}:-1[logo]")
+        # 叠加 logo（右上角）
+        filter_parts.append(f"[0][logo]overlay=W-w-15:15[v1]")
+        video_input = "[v1]"
+    else:
+        video_input = "[0]"
+
+    # 字幕滤镜
     if subtitle_path and os.path.exists(subtitle_path):
-        # 使用滤镜嵌入字幕
-        filter_complex = f"scale='min({max_width},iw)':-2,ass={subtitle_path}"
-        cmd.extend(["-vf", filter_complex])
+        escaped_path = subtitle_path.replace("'", "'\\''").replace(":", "\\:")
+        filter_parts.append(f"{video_input}ass='{escaped_path}'[v2]")
+        video_input = "[v2]"
+
+    # 缩放滤镜
+    filter_parts.append(f"{video_input}scale='min({max_width},iw)':-2")
+
+    filter_complex = ",".join(filter_parts) if len(filter_parts) == 1 else ";".join(filter_parts[:-1]) + "," + filter_parts[-1].split("]")[-1]
+
+    # 如果有多个滤镜需要用 filter_complex，否则用 vf
+    if use_logo or (subtitle_path and os.path.exists(subtitle_path)):
+        cmd.extend(["-filter_complex", filter_complex])
     else:
         cmd.extend(["-vf", f"scale='min({max_width},iw)':-2"])
 
