@@ -13,12 +13,22 @@ if [ -f .env ]; then
     set -a; source .env; set +a
 fi
 
-# 设置 PATH (Python 3.9 优先，然后 Homebrew)
-export PATH="$HOME/Library/Python/3.9/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# venv 路径
+VENV_DIR="$SCRIPT_DIR/venv"
 
-# Python 命令
-CELERY="$HOME/Library/Python/3.9/bin/celery"
-UVICORN="$HOME/Library/Python/3.9/bin/uvicorn"
+# 激活 venv（如果存在）
+if [ -d "$VENV_DIR" ]; then
+    source "$VENV_DIR/bin/activate"
+    PYTHON="$VENV_DIR/bin/python"
+    CELERY="$VENV_DIR/bin/celery"
+    UVICORN="$VENV_DIR/bin/uvicorn"
+else
+    # 回退到系统 Python
+    export PATH="$HOME/Library/Python/3.9/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    PYTHON="python3"
+    CELERY="$HOME/Library/Python/3.9/bin/celery"
+    UVICORN="$HOME/Library/Python/3.9/bin/uvicorn"
+fi
 
 # 默认值
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -27,6 +37,9 @@ export WHISPER_MODEL="${WHISPER_MODEL:-turbo}"
 export API_HOST="${API_HOST:-0.0.0.0}"
 export API_PORT="${API_PORT:-8000}"
 export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
+
+# PyTorch MPS 回退（解决部分操作不支持 MPS 的问题）
+export PYTORCH_ENABLE_MPS_FALLBACK=1
 
 # 创建必要目录
 mkdir -p "$OUTPUT_DIR"
@@ -41,8 +54,30 @@ NC='\033[0m'
 MODE="${1:-help}"
 
 case "$MODE" in
+    setup)
+        echo -e "${YELLOW}设置 Python 虚拟环境...${NC}"
+
+        # 创建 venv
+        if [ ! -d "$VENV_DIR" ]; then
+            python3 -m venv "$VENV_DIR"
+            echo -e "${GREEN}已创建 venv: $VENV_DIR${NC}"
+        else
+            echo -e "${YELLOW}venv 已存在: $VENV_DIR${NC}"
+        fi
+
+        # 激活并安装依赖
+        source "$VENV_DIR/bin/activate"
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+        echo -e "${GREEN}依赖安装完成！${NC}"
+        echo ""
+        echo "现在可以运行: ./run.sh start"
+        ;;
+
     worker)
         echo -e "${GREEN}启动 Celery Worker (solo 池, 支持 GPU)...${NC}"
+        echo -e "${GREEN}PYTORCH_ENABLE_MPS_FALLBACK=1${NC}"
         $CELERY -A media_processor.celery_app worker \
             --pool=solo \
             -Q download,transcribe,translate,encode,default \
@@ -58,6 +93,11 @@ case "$MODE" in
 
     start)
         echo -e "${YELLOW}启动所有服务 (后台模式)...${NC}"
+
+        # 检查 venv
+        if [ ! -d "$VENV_DIR" ]; then
+            echo -e "${YELLOW}未检测到 venv，请先运行: ./run.sh setup${NC}"
+        fi
 
         # 检查 Redis
         if ! redis-cli ping > /dev/null 2>&1; then
@@ -104,6 +144,13 @@ case "$MODE" in
     status)
         echo -e "${YELLOW}=== 服务状态 ===${NC}"
         echo ""
+        echo "venv:"
+        if [ -d "$VENV_DIR" ]; then
+            echo "  $VENV_DIR (已安装)"
+        else
+            echo "  未安装 (运行 ./run.sh setup)"
+        fi
+        echo ""
         echo "Redis:"
         redis-cli ping 2>/dev/null || echo "  未运行"
         echo ""
@@ -135,7 +182,7 @@ case "$MODE" in
 
     test)
         echo -e "${YELLOW}运行测试...${NC}"
-        python -m pytest tests/ -v
+        $PYTHON -m pytest tests/ -v
         ;;
 
     *)
@@ -144,6 +191,7 @@ case "$MODE" in
         echo "用法: $0 <command>"
         echo ""
         echo "命令:"
+        echo "  setup     创建 venv 并安装依赖"
         echo "  start     启动所有服务 (后台)"
         echo "  stop      停止所有服务"
         echo "  restart   重启所有服务"
