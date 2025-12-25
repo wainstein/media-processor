@@ -13,8 +13,12 @@ if [ -f .env ]; then
     source .env
 fi
 
-# 设置 PATH (Homebrew + Python)
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/Library/Python/3.9/bin:$PATH"
+# 设置 PATH (Python 3.9 优先，然后 Homebrew)
+export PATH="$HOME/Library/Python/3.9/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# Python 命令
+CELERY="$HOME/Library/Python/3.9/bin/celery"
+UVICORN="$HOME/Library/Python/3.9/bin/uvicorn"
 
 # 默认值
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -39,7 +43,7 @@ MODE="${1:-help}"
 case "$MODE" in
     worker)
         echo -e "${GREEN}启动 Celery Worker (solo 池, 支持 GPU)...${NC}"
-        celery -A media_processor.celery_app worker \
+        $CELERY -A media_processor.celery_app worker \
             --pool=solo \
             -Q download,transcribe,translate,encode,default \
             -l INFO
@@ -47,7 +51,7 @@ case "$MODE" in
 
     api)
         echo -e "${GREEN}启动 API 服务 (端口: $API_PORT)...${NC}"
-        uvicorn media_processor.api.main:app \
+        $UVICORN media_processor.api.main:app \
             --host "$API_HOST" \
             --port "$API_PORT"
         ;;
@@ -67,14 +71,14 @@ case "$MODE" in
         sleep 1
 
         # 启动 Worker
-        nohup celery -A media_processor.celery_app worker \
+        nohup $CELERY -A media_processor.celery_app worker \
             --pool=solo \
             -Q download,transcribe,translate,encode,default \
             -l INFO > logs/worker.log 2>&1 &
         echo "Worker PID: $!"
 
         # 启动 API
-        nohup uvicorn media_processor.api.main:app \
+        nohup $UVICORN media_processor.api.main:app \
             --host "$API_HOST" \
             --port "$API_PORT" > logs/api.log 2>&1 &
         echo "API PID: $!"
