@@ -157,15 +157,17 @@ def _do_transcribe(self_task, video_path: str, task_id: str) -> dict:
     logger.info(f"[{task_id}] 开始转录...")
     result = model.transcribe(video_path, language=None, task="transcribe")
 
+    detected_language = result.get("language", "unknown")
+
     segments = []
     for seg in result.get("segments", []):
         segments.append({
             "start": seg["start"],
             "end": seg["end"],
             "text": seg["text"].strip(),
+            "language": detected_language,  # 每个 segment 都需要语言信息
         })
 
-    detected_language = result.get("language", "unknown")
     logger.info(f"[{task_id}] 转录完成: {len(segments)} 片段, 语言: {detected_language}")
 
     return {
@@ -258,10 +260,17 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
 
     logger.info(f"[{task_id}] 开始编码: {video_path}")
 
-    # 生成 ASS 字幕
+    # 生成 ASS 字幕（使用 encode 模块的完整版）
     if segments:
         subtitle_path = os.path.join(task_dir, "subtitles.ass")
-        _generate_ass_subtitle(segments, subtitle_path)
+        # 转换字段名：translated -> translation（encode 模块使用 translation）
+        formatted_segments = []
+        for seg in segments:
+            formatted_seg = seg.copy()
+            if "translated" in formatted_seg:
+                formatted_seg["translation"] = formatted_seg.pop("translated")
+            formatted_segments.append(formatted_seg)
+        encode_module._generate_ass_file(formatted_segments, subtitle_path, video_path)
         logger.info(f"[{task_id}] 生成字幕: {subtitle_path}")
 
     # 检测编码器
@@ -307,38 +316,6 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
         "subtitle_path": subtitle_path,
         "file_size": file_size,
     }
-
-
-def _generate_ass_subtitle(segments: list, output_path: str):
-    """生成 ASS 字幕文件"""
-    ass_header = """[Script Info]
-Title: Generated Subtitles
-ScriptType: v4.00+
-PlayDepth: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-
-    def format_time(seconds):
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = seconds % 60
-        return f"{h}:{m:02d}:{s:05.2f}"
-
-    lines = [ass_header]
-    for seg in segments:
-        start = format_time(seg["start"])
-        end = format_time(seg["end"])
-        text = seg.get("translated", seg["text"]).replace("\n", "\\N")
-        lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
 
 
 @shared_task(bind=True, name="media_processor.tasks.pipeline.process_video_pipeline")

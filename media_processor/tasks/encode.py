@@ -238,6 +238,10 @@ Style: Source,{source_font},{source_size},&H00E0FFFF,&H000000FF,&H00000000,&H800
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+    # 根据屏幕方向计算换行参数
+    is_portrait = width < height
+    max_chars_per_line = 16 if is_portrait else 28
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(ass_header)
 
@@ -254,14 +258,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             is_chinese = seg.get("language", "").lower() in ["zh", "zh-cn", "zh-tw", "chinese"]
 
             if is_chinese:
-                # 中文原文在上，英文翻译在下
+                # 中文原文在上，英文翻译在下（英文不换行）
                 f.write(f"Dialogue: 0,{start_time},{end_time},Chinese,,0,0,{upper_margin_v},,{source_text}\n")
                 if trans_text:
                     f.write(f"Dialogue: 0,{start_time},{end_time},Source,,0,0,0,,{trans_text}\n")
             else:
-                # 中文翻译在上，原文在下
+                # 中文翻译在上，原文在下（中文需要智能换行）
                 if trans_text:
-                    f.write(f"Dialogue: 0,{start_time},{end_time},Chinese,,0,0,{upper_margin_v},,{trans_text}\n")
+                    wrapped_trans = _wrap_text_with_newlines(trans_text, max_chars=max_chars_per_line)
+                    f.write(f"Dialogue: 0,{start_time},{end_time},Chinese,,0,0,{upper_margin_v},,{wrapped_trans}\n")
                 f.write(f"Dialogue: 0,{start_time},{end_time},Source,,0,0,0,,{source_text}\n")
 
 
@@ -272,3 +277,59 @@ def _seconds_to_ass_time(seconds: float) -> str:
     secs = int(seconds % 60)
     centiseconds = int((seconds - int(seconds)) * 100)
     return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+
+
+def _wrap_text_with_newlines(text: str, max_chars: int = 18) -> str:
+    """
+    智能中文换行，使用 ASS 的 \\N 强制换行符。
+    优先在标点符号处断开，其次在连接词处断开，最后强制断开。
+    """
+    if len(text) <= max_chars:
+        return text
+
+    # 优先断开的标点符号
+    punctuation = ['，', '。', '、', '；', '：', '！', '？', ',', '.', ';', ':', '!', '?']
+    # 连接词
+    connectives = ['因为', '所以', '因此', '但是', '可是', '然而', '不过',
+                   '而且', '并且', '同时', '另外', '此外', '然后', '接着',
+                   '如果', '那么', '虽然', '即使', '或者', '还是']
+
+    lines = []
+    current_line = ""
+    i = 0
+
+    while i < len(text):
+        char = text[i]
+        current_line += char
+
+        if len(current_line) >= max_chars:
+            # 尝试在标点处断开
+            best_break = -1
+            for p in punctuation:
+                pos = current_line.rfind(p)
+                if pos > len(current_line) // 3:
+                    best_break = max(best_break, pos + len(p))
+
+            if best_break > 0:
+                lines.append(current_line[:best_break])
+                current_line = current_line[best_break:]
+            else:
+                # 尝试在连接词处断开
+                for conn in connectives:
+                    pos = current_line.rfind(conn)
+                    if pos > len(current_line) // 3:
+                        lines.append(current_line[:pos])
+                        current_line = current_line[pos:]
+                        break
+                else:
+                    # 强制断开
+                    if len(current_line) > max_chars + 3:
+                        lines.append(current_line)
+                        current_line = ""
+
+        i += 1
+
+    if current_line:
+        lines.append(current_line)
+
+    return r"\N".join(lines)
