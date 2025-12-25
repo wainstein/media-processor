@@ -8,9 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 加载环境变量
+# 加载环境变量 (set -a 自动 export 所有变量)
 if [ -f .env ]; then
-    source .env
+    set -a; source .env; set +a
 fi
 
 # 设置 PATH (Python 3.9 优先，然后 Homebrew)
