@@ -13,6 +13,9 @@ if [ -f .env ]; then
     source .env
 fi
 
+# 设置 PATH (Homebrew + Python)
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/Library/Python/3.9/bin:$PATH"
+
 # 默认值
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 export OUTPUT_DIR="${OUTPUT_DIR:-/tmp/media_processor}"
