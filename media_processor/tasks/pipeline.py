@@ -245,11 +245,13 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
 
 
 def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
-               video_bitrate: str = "500k", max_width: int = 720, embed_logo: bool = True) -> dict:
+               video_bitrate: str = "500k", max_width: int = 720,
+               embed_logo: bool = True, logo_base64: str = None) -> dict:
     """直接执行编码（绕过 Celery）"""
     import subprocess
     import tempfile
     import platform
+    import base64
 
     OUTPUT_DIR = os.getenv("OUTPUT_DIR", tempfile.gettempdir())
     task_dir = os.path.join(OUTPUT_DIR, task_id)
@@ -297,15 +299,33 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
 
     aspect_ratio = width / height if height > 0 else 1.78
 
-    # Logo 路径（在项目根目录的 assets 文件夹）
-    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    logo_path = os.path.join(script_dir, "assets", "logo.png")
-    use_logo = embed_logo and os.path.exists(logo_path)
+    # 处理 Logo
+    logo_path = None
+    use_logo = False
 
-    if use_logo:
-        logger.info(f"[{task_id}] 使用 logo: {logo_path}")
-    elif embed_logo:
-        logger.warning(f"[{task_id}] Logo 文件不存在: {logo_path}")
+    if embed_logo:
+        if logo_base64:
+            # 从 base64 解码 logo
+            try:
+                logo_data = base64.b64decode(logo_base64)
+                logo_path = os.path.join(task_dir, "logo.png")
+                with open(logo_path, "wb") as f:
+                    f.write(logo_data)
+                use_logo = True
+                logger.info(f"[{task_id}] 使用客户端传入的 logo")
+            except Exception as e:
+                logger.warning(f"[{task_id}] 解码 logo 失败: {e}")
+
+        # 如果没有传入 logo，尝试使用默认的
+        if not use_logo:
+            script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            default_logo = os.path.join(script_dir, "assets", "logo.png")
+            if os.path.exists(default_logo):
+                logo_path = default_logo
+                use_logo = True
+                logger.info(f"[{task_id}] 使用默认 logo: {logo_path}")
+            else:
+                logger.warning(f"[{task_id}] 没有可用的 logo")
 
     # 构建 ffmpeg 命令
     cmd = ["ffmpeg", "-y", "-i", video_path]
@@ -451,6 +471,8 @@ def process_video_pipeline(
             segments=segments if options.get("embed_subtitles", True) else None,
             video_bitrate=options.get("video_bitrate", "500k"),
             max_width=options.get("max_width", 720),
+            embed_logo=options.get("embed_logo", True),
+            logo_base64=options.get("logo_base64"),
         )
 
         output_path = encode_result["output_path"]

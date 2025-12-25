@@ -41,6 +41,7 @@ class TaskOptions(BaseModel):
     translate: bool = True
     target_language: str = "zh"
     embed_subtitles: bool = True
+    embed_logo: bool = True
     video_bitrate: str = "500k"
     audio_bitrate: str = "64k"
     max_width: int = 720
@@ -50,6 +51,7 @@ class TaskSubmit(BaseModel):
     url: str
     options: Optional[TaskOptions] = None
     callback_url: Optional[str] = None
+    logo_base64: Optional[str] = None  # Logo 图片的 base64 编码
 
 
 class TaskStatus(BaseModel):
@@ -113,10 +115,15 @@ async def submit_task(task: TaskSubmit):
     - url: 视频 URL (YouTube, Twitter, Instagram 等)
     - options: 处理选项
     - callback_url: 完成后回调地址
+    - logo_base64: Logo 图片的 base64 编码（可选）
     """
     task_id = str(uuid.uuid4())
 
     options_dict = task.options.model_dump() if task.options else {}
+
+    # 如果有 logo，添加到 options
+    if task.logo_base64:
+        options_dict["logo_base64"] = task.logo_base64
 
     # 提交到 Celery
     result = process_video_pipeline.apply_async(
