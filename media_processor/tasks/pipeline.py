@@ -352,8 +352,8 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
         filter_parts.append(f"[{video_label}]ass='{escaped_path}'[v2]")
         video_label = "v2"
 
-    # 缩放滤镜（最后一个滤镜不需要输出标签）
-    filter_parts.append(f"[{video_label}]scale='min({max_width},iw)':-2")
+    # 缩放滤镜（添加输出标签用于 map）
+    filter_parts.append(f"[{video_label}]scale='min({max_width},iw)':-2[vout]")
 
     # 用分号连接所有滤镜
     filter_complex = ";".join(filter_parts)
@@ -361,6 +361,8 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
     # 如果有多个滤镜需要用 filter_complex，否则用 vf
     if use_logo or (subtitle_path and os.path.exists(subtitle_path)):
         cmd.extend(["-filter_complex", filter_complex])
+        # 显式映射：视频用滤镜输出，音频用原始输入
+        cmd.extend(["-map", "[vout]", "-map", "0:a"])
     else:
         cmd.extend(["-vf", f"scale='min({max_width},iw)':-2"])
 
