@@ -3,16 +3,18 @@ Media Processor REST API
 """
 import os
 import uuid
+import shutil
+import tempfile
 from datetime import datetime
-from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from typing import Optional, Dict, Any, List
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from celery.result import AsyncResult
 
 from media_processor.celery_app import celery_app
-from media_processor.tasks.pipeline import process_video_pipeline
+from media_processor.tasks.pipeline import process_video_pipeline, process_file_pipeline
 
 # 配置
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
@@ -299,6 +301,156 @@ async def queue_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 文件上传相关 ====================
+
+@app.post("/api/transcribe")
+async def transcribe_file(
+    file: UploadFile = File(...),
+    model: str = Form(default="base"),
+    language: Optional[str] = Form(default=None)
+):
+    """
+    快速转录 - 上传音频/视频文件，返回转录文本
+
+    - file: 音频或视频文件
+    - model: Whisper 模型 (tiny/base/small/medium/large/turbo)，默认 base
+    - language: 指定语言代码（可选，如 en/zh/ja）
+
+    返回: 转录文本和分段信息
+    """
+    import whisper
+    import torch
+
+    # 保存上传的文件
+    task_id = str(uuid.uuid4())
+    task_dir = os.path.join(OUTPUT_DIR, task_id)
+    os.makedirs(task_dir, exist_ok=True)
+
+    # 保留原始扩展名
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
+    file_path = os.path.join(task_dir, f"input{ext}")
+
+    try:
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        # 选择设备
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
+
+        # 加载模型
+        try:
+            whisper_model = whisper.load_model(model, device=device)
+        except Exception:
+            device = "cpu"
+            whisper_model = whisper.load_model(model, device=device)
+
+        # 转录
+        result = whisper_model.transcribe(
+            file_path,
+            language=language,
+            task="transcribe"
+        )
+
+        # 提取结果
+        segments = []
+        for seg in result.get("segments", []):
+            segments.append({
+                "start": round(seg["start"], 2),
+                "end": round(seg["end"], 2),
+                "text": seg["text"].strip()
+            })
+
+        return {
+            "task_id": task_id,
+            "text": result.get("text", "").strip(),
+            "language": result.get("language", "unknown"),
+            "segments": segments,
+            "model": model,
+            "device": device
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # 清理临时文件
+        try:
+            shutil.rmtree(task_dir)
+        except:
+            pass
+
+
+@app.post("/api/tasks/upload", response_model=TaskStatus)
+async def submit_upload_task(
+    file: UploadFile = File(...),
+    translate: bool = Form(default=True),
+    target_language: str = Form(default="zh"),
+    embed_subtitles: bool = Form(default=True),
+    embed_logo: bool = Form(default=True),
+    video_bitrate: str = Form(default="500k"),
+    max_width: int = Form(default=720),
+    logo_base64: Optional[str] = Form(default=None),
+    callback_url: Optional[str] = Form(default=None)
+):
+    """
+    上传文件进行完整处理（转录+翻译+编码）
+
+    - file: 视频文件
+    - translate: 是否翻译
+    - target_language: 目标语言
+    - embed_subtitles: 是否嵌入字幕
+    - embed_logo: 是否嵌入 logo
+    - video_bitrate: 视频码率
+    - max_width: 最大宽度
+    - logo_base64: Logo 图片 base64
+    - callback_url: 回调地址
+    """
+    task_id = str(uuid.uuid4())
+    task_dir = os.path.join(OUTPUT_DIR, task_id)
+    os.makedirs(task_dir, exist_ok=True)
+
+    # 保存上传的文件
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
+    file_path = os.path.join(task_dir, f"input{ext}")
+
+    try:
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存文件失败: {e}")
+
+    options = {
+        "translate": translate,
+        "target_language": target_language,
+        "embed_subtitles": embed_subtitles,
+        "embed_logo": embed_logo,
+        "video_bitrate": video_bitrate,
+        "max_width": max_width,
+    }
+
+    if logo_base64:
+        options["logo_base64"] = logo_base64
+
+    # 提交到 Celery（使用文件路径而非 URL）
+    result = process_file_pipeline.apply_async(
+        args=[file_path, options, callback_url],
+        task_id=task_id
+    )
+
+    return TaskStatus(
+        task_id=task_id,
+        status="queued",
+        stage="pending",
+        progress=0,
+        created_at=datetime.now().isoformat()
+    )
 
 
 # ==================== 启动入口 ====================

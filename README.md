@@ -97,9 +97,62 @@ curl -O http://localhost:8000/api/tasks/{task_id}/download
 
 ## API
 
+### POST /api/transcribe
+
+Quick transcription - upload a file and get text back immediately.
+
+```bash
+curl -X POST http://localhost:8000/api/transcribe \
+  -F "file=@video.mp4" \
+  -F "model=base" \
+  -F "language=en"
+```
+
+**Parameters:**
+- `file`: Audio/video file (required)
+- `model`: Whisper model - tiny/base/small/medium/large/turbo (default: base)
+- `language`: Language code like en/zh/ja (optional, auto-detect if not specified)
+
+**Response:**
+```json
+{
+  "text": "Full transcript text...",
+  "language": "en",
+  "segments": [
+    {"start": 0.0, "end": 2.5, "text": "Hello world"},
+    ...
+  ],
+  "model": "base",
+  "device": "mps"
+}
+```
+
+### POST /api/tasks/upload
+
+Upload a file for full processing (transcribe + translate + encode).
+
+```bash
+curl -X POST http://localhost:8000/api/tasks/upload \
+  -F "file=@video.mp4" \
+  -F "translate=true" \
+  -F "target_language=zh" \
+  -F "embed_subtitles=true"
+```
+
+**Parameters:**
+- `file`: Video file (required)
+- `translate`: Whether to translate (default: true)
+- `target_language`: Target language (default: zh)
+- `embed_subtitles`: Embed subtitles in video (default: true)
+- `embed_logo`: Embed logo watermark (default: true)
+- `video_bitrate`: Video bitrate (default: 500k)
+- `max_width`: Max video width (default: 720)
+- `logo_base64`: Logo image in base64 (optional)
+- `callback_url`: Callback URL when done (optional)
+
 ### POST /api/tasks
 
-Submit a processing task.
+Submit a processing task (download from URL).
 
 ```json
 {

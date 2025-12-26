@@ -524,3 +524,112 @@ def process_video_pipeline(
                 pass
 
         raise
+
+
+@shared_task(bind=True, name="media_processor.tasks.pipeline.process_file_pipeline")
+def process_file_pipeline(
+    self,
+    file_path: str,
+    options: Optional[Dict[str, Any]] = None,
+    callback_url: Optional[str] = None
+) -> dict:
+    """
+    文件处理管道（跳过下载步骤）
+
+    Args:
+        file_path: 本地视频文件路径
+        options: 处理选项
+        callback_url: 完成后回调 URL
+
+    Returns:
+        同 process_video_pipeline
+    """
+    task_id = self.request.id or str(uuid.uuid4())
+    options = options or {}
+
+    logger.info(f"[{task_id}] 开始处理文件: {file_path}")
+
+    transcribe_result = {}
+
+    try:
+        # ==================== 阶段 1: 转录 ====================
+        segments = []
+        if options.get("embed_subtitles", True):
+            self.update_state(state="TRANSCRIBING", meta={"stage": "transcribing", "progress": 10})
+
+            transcribe_result = _do_transcribe(self, file_path, task_id)
+
+            segments = transcribe_result.get("segments", [])
+            detected_language = transcribe_result.get("language", "unknown")
+
+            logger.info(f"[{task_id}] 转录完成: {len(segments)} 片段, 语言: {detected_language}")
+
+            # ==================== 阶段 2: 翻译 ====================
+            if options.get("translate", True) and segments:
+                self.update_state(state="TRANSLATING", meta={"stage": "translating", "progress": 40})
+
+                target_lang = options.get("target_language", "zh")
+
+                segments = _do_translate(self, segments, task_id, target_lang, "")
+
+                logger.info(f"[{task_id}] 翻译完成")
+
+        # ==================== 阶段 3: 编码 ====================
+        self.update_state(state="ENCODING", meta={"stage": "encoding", "progress": 70})
+
+        encode_result = _do_encode(
+            self,
+            file_path,
+            task_id,
+            segments=segments if options.get("embed_subtitles", True) else None,
+            video_bitrate=options.get("video_bitrate", "500k"),
+            max_width=options.get("max_width", 720),
+            embed_logo=options.get("embed_logo", True),
+            logo_base64=options.get("logo_base64"),
+        )
+
+        output_path = encode_result["output_path"]
+        subtitle_path = encode_result.get("subtitle_path")
+
+        logger.info(f"[{task_id}] 编码完成: {output_path}")
+
+        # ==================== 完成 ====================
+        result = {
+            "task_id": task_id,
+            "status": "completed",
+            "output_path": output_path,
+            "subtitle_path": subtitle_path,
+            "file_size": encode_result.get("file_size", 0),
+            "metadata": {
+                "language": transcribe_result.get("language") if segments else None,
+                "segment_count": len(segments),
+            }
+        }
+
+        # 回调通知
+        if callback_url:
+            try:
+                requests.post(callback_url, json=result, timeout=10)
+                logger.info(f"[{task_id}] 回调成功: {callback_url}")
+            except Exception as e:
+                logger.warning(f"[{task_id}] 回调失败: {e}")
+
+        logger.info(f"[{task_id}] 文件处理完成")
+        return result
+
+    except Exception as e:
+        logger.error(f"[{task_id}] 文件处理失败: {e}")
+
+        error_result = {
+            "task_id": task_id,
+            "status": "failed",
+            "error": str(e)
+        }
+
+        if callback_url:
+            try:
+                requests.post(callback_url, json=error_result, timeout=10)
+            except:
+                pass
+
+        raise
