@@ -470,6 +470,80 @@
             </div>
         </div>
 
+        <!-- 快速转录 & 文件上传 -->
+        <div class="grid" style="margin-top: 20px;">
+            <!-- 快速转录 -->
+            <div class="card">
+                <h2><span class="icon">🎤</span> 快速转录</h2>
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-bottom: 16px;">上传音频/视频文件，立即返回转录文本</p>
+
+                <div class="form-group">
+                    <label>选择文件</label>
+                    <input type="file" id="transcribeFile" accept="audio/*,video/*">
+                </div>
+
+                <div class="form-group">
+                    <label>Whisper 模型</label>
+                    <select id="transcribeModel">
+                        <option value="tiny">tiny (最快)</option>
+                        <option value="base" selected>base (推荐)</option>
+                        <option value="small">small</option>
+                        <option value="medium">medium</option>
+                        <option value="turbo">turbo</option>
+                        <option value="large">large (最准)</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" onclick="quickTranscribe()" id="transcribeBtn">
+                    <span>🎯</span> 开始转录
+                </button>
+
+                <div id="transcribeResult" style="margin-top: 16px; display: none;">
+                    <label>转录结果 (<span id="transcribeLang">-</span>)</label>
+                    <textarea id="transcribeText" readonly style="width: 100%; height: 150px; background: var(--accent); border: none; border-radius: 8px; padding: 12px; color: var(--text); font-size: 0.9em; resize: vertical;"></textarea>
+                </div>
+            </div>
+
+            <!-- 文件上传处理 -->
+            <div class="card">
+                <h2><span class="icon">📁</span> 文件上传处理</h2>
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-bottom: 16px;">上传视频文件，完整处理（转录+翻译+编码）</p>
+
+                <div class="form-group">
+                    <label>选择视频文件</label>
+                    <input type="file" id="uploadFile" accept="video/*">
+                </div>
+
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="uploadTranslate" checked>
+                        <label for="uploadTranslate" style="margin: 0;">翻译字幕</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="uploadEmbed" checked>
+                        <label for="uploadEmbed" style="margin: 0;">嵌入字幕</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="uploadLogo" checked>
+                        <label for="uploadLogo" style="margin: 0;">嵌入 Logo</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>目标语言</label>
+                    <select id="uploadLang">
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                        <option value="ja">日本語</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" onclick="uploadAndProcess()" id="uploadBtn">
+                    <span>📤</span> 上传并处理
+                </button>
+            </div>
+        </div>
+
         <!-- 任务列表 -->
         <div class="card" style="margin-top: 20px;">
             <h2><span class="icon">📋</span> 任务列表</h2>
@@ -763,6 +837,107 @@
         function downloadSubtitle(taskId) {
             window.open(`${API_URL}/api/tasks/${taskId}/subtitle`, '_blank');
             log(`开始下载字幕: ${taskId.substring(0, 8)}...`, 'info');
+        }
+
+        // 快速转录
+        async function quickTranscribe() {
+            const fileInput = document.getElementById('transcribeFile');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                log('请选择要转录的文件', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('transcribeBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳</span> 转录中...';
+
+            const model = document.getElementById('transcribeModel').value;
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model', model);
+
+            log(`开始转录: ${file.name} (模型: ${model})`, 'info');
+
+            try {
+                const response = await fetch(`${API_URL}/api/transcribe`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    document.getElementById('transcribeLang').textContent = data.language || 'unknown';
+                    document.getElementById('transcribeText').value = data.text || '';
+                    document.getElementById('transcribeResult').style.display = 'block';
+                    log(`转录完成: ${data.segments?.length || 0} 片段, 语言: ${data.language}, 设备: ${data.device}`, 'success');
+                } else {
+                    throw new Error(data.detail || '转录失败');
+                }
+            } catch (error) {
+                log(`转录失败: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🎯</span> 开始转录';
+            }
+        }
+
+        // 文件上传处理
+        async function uploadAndProcess() {
+            const fileInput = document.getElementById('uploadFile');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                log('请选择要处理的视频文件', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('uploadBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳</span> 上传中...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('translate', document.getElementById('uploadTranslate').checked);
+            formData.append('target_language', document.getElementById('uploadLang').value);
+            formData.append('embed_subtitles', document.getElementById('uploadEmbed').checked);
+            formData.append('embed_logo', document.getElementById('uploadLogo').checked);
+
+            // 如果有 logo 也一起上传
+            if (logoBase64 && document.getElementById('uploadLogo').checked) {
+                formData.append('logo_base64', logoBase64);
+            }
+
+            log(`上传文件: ${file.name}`, 'info');
+
+            try {
+                const response = await fetch(`${API_URL}/api/tasks/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    log(`任务已提交: ${data.task_id}`, 'success');
+                    tasks.set(data.task_id, {
+                        ...data,
+                        url: `[上传] ${file.name}`
+                    });
+                    totalTasks++;
+                    renderTasks();
+                    fileInput.value = '';
+                } else {
+                    throw new Error(data.detail || '提交失败');
+                }
+            } catch (error) {
+                log(`上传失败: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>📤</span> 上传并处理';
+            }
         }
 
         // 初始化
