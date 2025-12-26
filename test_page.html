@@ -374,7 +374,7 @@
         </header>
 
         <div class="api-url-input">
-            <input type="text" id="apiUrl" value="http://192.168.2.123:8000" placeholder="API 地址">
+            <input type="text" id="apiUrl" value="" placeholder="API 地址">
             <button class="btn btn-secondary" onclick="checkHealth()">检查连接</button>
             <span id="healthStatus" class="status-indicator unhealthy">
                 <span class="status-dot"></span>
@@ -558,7 +558,17 @@
     </div>
 
     <script>
-        // 配置
+        // 配置 - 自动检测 API 地址
+        function getDefaultApiUrl() {
+            // 如果是通过 API 服务访问的，使用当前 origin
+            if (window.location.pathname === '/test') {
+                return window.location.origin;
+            }
+            // 否则使用默认地址
+            return 'http://192.168.2.123:8000';
+        }
+
+        document.getElementById('apiUrl').value = getDefaultApiUrl();
         let API_URL = document.getElementById('apiUrl').value;
         const tasks = new Map();
         let pollInterval = null;

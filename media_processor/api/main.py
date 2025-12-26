@@ -8,8 +8,9 @@ import tempfile
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, HttpUrl
 from celery.result import AsyncResult
 
@@ -85,6 +86,20 @@ async def root():
         "version": "0.1.0",
         "status": "running"
     }
+
+
+@app.get("/test", response_class=HTMLResponse)
+async def test_page():
+    """测试页面"""
+    # 获取项目根目录
+    script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    test_page_path = os.path.join(script_dir, "test_page.html")
+
+    if os.path.exists(test_page_path):
+        with open(test_page_path, "r", encoding="utf-8") as f:
+            return f.read()
+    else:
+        return HTMLResponse(content="<h1>Test page not found</h1>", status_code=404)
 
 
 @app.get("/health")
