@@ -275,9 +275,18 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
         encode_module._generate_ass_file(formatted_segments, subtitle_path, video_path)
         logger.info(f"[{task_id}] 生成字幕: {subtitle_path}")
 
+    # 检测是否使用复杂滤镜（logo 或字幕）
+    has_complex_filters = embed_logo or (segments and len(segments) > 0)
+
     # 检测编码器
+    # 注意：h264_videotoolbox 与复杂 filter_complex 链组合时会产生损坏的视频
+    # 当使用 logo 或字幕时，强制使用 libx264
     is_apple = platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
-    video_codec = "h264_videotoolbox" if is_apple else "libx264"
+    if has_complex_filters:
+        video_codec = "libx264"
+        logger.info(f"[{task_id}] 使用 libx264（复杂滤镜链与 videotoolbox 不兼容）")
+    else:
+        video_codec = "h264_videotoolbox" if is_apple else "libx264"
 
     # 获取视频尺寸用于 logo 计算
     width, height = 1280, 720
@@ -366,8 +375,13 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
     else:
         cmd.extend(["-vf", f"scale='min({max_width},iw)':-2"])
 
+    cmd.extend(["-c:v", video_codec])
+
+    # libx264 需要额外参数
+    if video_codec == "libx264":
+        cmd.extend(["-preset", "medium", "-crf", "23"])
+
     cmd.extend([
-        "-c:v", video_codec,
         "-b:v", video_bitrate,
         "-c:a", "aac",
         "-b:a", "64k",
