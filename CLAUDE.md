@@ -77,11 +77,21 @@ media-processor/
 
 ### `run.sh`
 
-启动脚本，使用 Python 3.9 的 celery 和 uvicorn（路径 `$HOME/Library/Python/3.9/bin/`），避免使用系统 Python。
+启动脚本，支持 venv 环境。如果 `./venv` 存在则自动激活，否则回退到 `$HOME/Library/Python/3.9/bin/`。
+
+### `tasks/encode.py`
+
+ASS 字幕生成，包含：
+- 双语字幕样式（中文大字 + 原文小字）
+- 智能中文换行（`_wrap_text_with_newlines`）
+- 根据视频方向（横屏/竖屏）自动调整字体大小和边距
 
 ## 开发命令
 
 ```bash
+# 首次安装：创建 venv 并安装依赖
+./run.sh setup
+
 # 启动服务
 ./run.sh start
 
@@ -99,6 +109,9 @@ media-processor/
 # 前台运行（调试用）
 ./run.sh worker
 ./run.sh api
+
+# 运行测试
+./run.sh test
 ```
 
 ## 部署
@@ -144,6 +157,8 @@ git pull
 
 3. **内存占用** - turbo 模型约需 2GB 显存，large-v2 约需 4GB
 
+4. **MPS 回退** - 启动脚本自动设置 `PYTORCH_ENABLE_MPS_FALLBACK=1`，当某些 PyTorch 操作不支持 MPS 时自动回退到 CPU
+
 ## 环境变量
 
 ```env
@@ -153,7 +168,24 @@ OUTPUT_DIR=/tmp/media_processor
 WHISPER_MODEL=turbo
 API_HOST=0.0.0.0
 API_PORT=8000
+PYTORCH_ENABLE_MPS_FALLBACK=1  # 自动设置，无需手动配置
 ```
+
+## Logo 水印
+
+支持通过 API 传入 Logo 图片（base64 编码），嵌入到视频右上角。
+
+```json
+{
+  "url": "https://youtube.com/watch?v=xxx",
+  "options": {
+    "embed_logo": true
+  },
+  "logo_base64": "iVBORw0KGgoAAAANSUhEUgAA..."
+}
+```
+
+如果没有传入 `logo_base64`，会尝试使用 `assets/logo.png`（如果存在）。
 
 ## 未来计划
 

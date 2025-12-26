@@ -1,32 +1,33 @@
 # Media Processor
 
-视频下载、转录、翻译、编码微服务。
+A video download, transcription, translation, and encoding microservice.
 
-## 功能
+## Features
 
-- **下载** - 支持 YouTube、Twitter/X、Instagram 等平台 (yt-dlp)
-- **转录** - 使用 OpenAI Whisper 进行语音识别 (支持 MPS/CUDA 加速)
-- **翻译** - 使用 OpenAI GPT 翻译字幕
-- **编码** - 使用 ffmpeg 压缩视频并嵌入字幕 (支持 VideoToolbox/NVENC)
+- **Download** - YouTube, Twitter/X, Instagram, etc. (via yt-dlp)
+- **Transcribe** - Speech-to-text with OpenAI Whisper (MPS/CUDA accelerated)
+- **Translate** - Subtitle translation with OpenAI GPT
+- **Encode** - Video compression with ffmpeg + embedded subtitles (VideoToolbox/NVENC)
+- **Logo Watermark** - Optional logo overlay via API
 
-## 架构
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              客户端 (ChatXia, 其他服务)                       │
+│                           Client (ChatXia, etc.)                            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                         │
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              FastAPI (REST API)                              │
-│                              - 接收任务请求                                   │
-│                              - 返回任务状态                                   │
-│                              - 提供文件下载                                   │
+│                              FastAPI (REST API)                             │
+│                              - Accept task requests                         │
+│                              - Return task status                           │
+│                              - Serve output files                           │
 └─────────────────────────────────────────────────────────────────────────────┘
                                         │
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Redis (任务队列 + 结果存储)                      │
+│                         Redis (Task Queue + Result Store)                   │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐            │
 │  │ download_q  │ │ transcribe_q│ │ translate_q │ │ encode_q    │            │
 │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘            │
@@ -34,62 +35,63 @@
                                         │
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Celery Worker (solo pool)                       │
-│                              - 支持 MPS/CUDA GPU 加速                        │
-│                              - 队列串行处理                                   │
+│                           Celery Worker (solo pool)                         │
+│                           - MPS/CUDA GPU acceleration                       │
+│                           - Sequential task execution                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 任务流程
+## Pipeline
 
 ```
-提交任务 ──▶ 下载视频 ──▶ 转录 (Whisper) ──▶ 翻译 (GPT) ──▶ 编码 (ffmpeg) ──▶ 完成
-              yt-dlp        MPS/CUDA           OpenAI       VideoToolbox
+Submit Task ──▶ Download ──▶ Transcribe ──▶ Translate ──▶ Encode ──▶ Complete
+                 yt-dlp      Whisper        OpenAI       ffmpeg
+                             MPS/CUDA       GPT-4o       VideoToolbox
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 安装依赖
+### 1. Install Dependencies
 
 ```bash
-# 系统依赖 (macOS)
+# System dependencies (macOS)
 brew install redis ffmpeg
 
-# Python 依赖
-pip install -r requirements.txt
+# Create venv and install Python dependencies
+./run.sh setup
 ```
 
-### 2. 配置
+### 2. Configure
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 OPENAI_API_KEY
+# Edit .env and set OPENAI_API_KEY
 ```
 
-### 3. 启动服务
+### 3. Start Services
 
 ```bash
-# 启动 Redis
+# Start Redis
 brew services start redis
 
-# 启动服务
+# Start all services
 ./run.sh start
 ```
 
-### 4. 测试
+### 4. Test
 
-打开浏览器访问测试页面，或使用 API：
+Open `test_page.html` in browser, or use the API:
 
 ```bash
-# 提交任务
+# Submit task
 curl -X POST http://localhost:8000/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"url": "https://youtube.com/watch?v=xxx"}'
 
-# 查询状态
+# Check status
 curl http://localhost:8000/api/tasks/{task_id}
 
-# 下载结果
+# Download result
 curl -O http://localhost:8000/api/tasks/{task_id}/download
 ```
 
@@ -97,7 +99,7 @@ curl -O http://localhost:8000/api/tasks/{task_id}/download
 
 ### POST /api/tasks
 
-提交处理任务。
+Submit a processing task.
 
 ```json
 {
@@ -106,75 +108,98 @@ curl -O http://localhost:8000/api/tasks/{task_id}/download
     "translate": true,
     "target_language": "zh",
     "embed_subtitles": true,
+    "embed_logo": true,
     "video_bitrate": "500k",
     "max_width": 720
   },
-  "callback_url": "https://your-server.com/callback"
+  "callback_url": "https://your-server.com/callback",
+  "logo_base64": "iVBORw0KGgoAAAANSUhEUgAA..."
 }
 ```
 
+**Parameters:**
+- `logo_base64`: Base64-encoded logo image (optional, PNG recommended)
+
 ### GET /api/tasks/{task_id}
 
-查询任务状态。
+Get task status.
 
 ### GET /api/tasks/{task_id}/result
 
-获取任务结果详情。
+Get task result details.
 
 ### GET /api/tasks/{task_id}/download
 
-下载处理后的视频。
+Download processed video.
 
 ### GET /api/tasks/{task_id}/subtitle
 
-下载字幕文件 (ASS 格式)。
+Download subtitle file (ASS format).
 
 ### DELETE /api/tasks/{task_id}
 
-取消任务。
+Cancel a task.
 
 ### GET /health
 
-健康检查。
+Health check.
 
-## 命令
+## Commands
 
 ```bash
-./run.sh start      # 启动所有服务 (后台)
-./run.sh stop       # 停止所有服务
-./run.sh restart    # 重启
-./run.sh status     # 查看状态
-./run.sh logs       # 查看日志
-./run.sh worker     # 前台运行 Worker
-./run.sh api        # 前台运行 API
+./run.sh setup      # First time: create venv and install dependencies
+./run.sh start      # Start all services (background)
+./run.sh stop       # Stop all services
+./run.sh restart    # Restart services
+./run.sh status     # Check status
+./run.sh logs       # View logs
+./run.sh worker     # Run Worker in foreground
+./run.sh api        # Run API in foreground
+./run.sh test       # Run tests
 ```
 
-## 配置
+## Configuration
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| REDIS_URL | redis://localhost:6379/0 | Redis 连接地址 |
-| OPENAI_API_KEY | - | OpenAI API Key (翻译用) |
-| OUTPUT_DIR | /tmp/media_processor | 输出目录 |
-| WHISPER_MODEL | turbo | Whisper 模型 (tiny/base/small/medium/large/turbo) |
-| API_HOST | 0.0.0.0 | API 监听地址 |
-| API_PORT | 8000 | API 端口 |
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| REDIS_URL | redis://localhost:6379/0 | Redis connection URL |
+| OPENAI_API_KEY | - | OpenAI API Key (for translation) |
+| OUTPUT_DIR | /tmp/media_processor | Output directory |
+| WHISPER_MODEL | turbo | Whisper model (tiny/base/small/medium/large/turbo) |
+| API_HOST | 0.0.0.0 | API listen address |
+| API_PORT | 8000 | API port |
 
-## GPU 加速
+## GPU Acceleration
 
 ### Apple Silicon (MPS)
 
-Whisper 自动使用 MPS 加速。Worker 使用 `--pool=solo` 以兼容 Metal。
+Whisper automatically uses MPS acceleration. Worker uses `--pool=solo` for Metal compatibility.
+
+`PYTORCH_ENABLE_MPS_FALLBACK=1` is automatically set for unsupported operations.
 
 ### NVIDIA (CUDA)
 
-安装 CUDA 版本的 PyTorch 后自动启用。
+Install CUDA-enabled PyTorch for automatic CUDA support.
 
-### 视频编码
+### Video Encoding
 
-- macOS: 自动使用 VideoToolbox (h264_videotoolbox)
-- Linux/NVIDIA: 自动使用 NVENC (h264_nvenc)
-- 其他: 使用 libx264
+- macOS: VideoToolbox (h264_videotoolbox)
+- Linux/NVIDIA: NVENC (h264_nvenc)
+- Other: libx264
+
+## Logo Watermark
+
+Supports embedding a logo image (base64-encoded) in the top-right corner of the video.
+
+If `logo_base64` is not provided, the service will try to use `assets/logo.png` if it exists.
+
+## Subtitle Format
+
+Generates bilingual ASS subtitles with:
+- Large Chinese translation on top
+- Small original text on bottom
+- Smart Chinese text wrapping
+- Adaptive sizing for portrait/landscape videos
 
 ## License
 

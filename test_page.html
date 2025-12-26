@@ -423,6 +423,18 @@
                     </select>
                 </div>
 
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="optLogo" checked>
+                        <label for="optLogo" style="margin: 0;">嵌入 Logo 水印</label>
+                    </div>
+                    <input type="file" id="logoFile" accept="image/png,image/jpeg" style="margin-top: 8px;">
+                    <div id="logoPreview" style="margin-top: 8px; display: none;">
+                        <img id="logoImg" style="max-width: 100px; max-height: 50px; border-radius: 4px;">
+                        <button class="btn btn-secondary" onclick="clearLogo()" style="margin-left: 8px; padding: 4px 8px; font-size: 0.8em;">✕ 清除</button>
+                    </div>
+                </div>
+
                 <button class="btn btn-primary" onclick="submitTask()" id="submitBtn">
                     <span>🚀</span> 提交任务
                 </button>
@@ -479,6 +491,30 @@
         let statsInterval = null;
         let totalTasks = 0;
         let completedTasks = 0;
+        let logoBase64 = null;
+
+        // Logo 文件处理
+        document.getElementById('logoFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const base64 = e.target.result.split(',')[1];  // 去掉 data:image/xxx;base64, 前缀
+                    logoBase64 = base64;
+                    document.getElementById('logoImg').src = e.target.result;
+                    document.getElementById('logoPreview').style.display = 'block';
+                    log(`Logo 已加载: ${file.name}`, 'success');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function clearLogo() {
+            logoBase64 = null;
+            document.getElementById('logoFile').value = '';
+            document.getElementById('logoPreview').style.display = 'none';
+            log('Logo 已清除', 'info');
+        }
 
         // 日志函数
         function log(message, type = 'info') {
@@ -565,8 +601,19 @@
                 translate: document.getElementById('optTranslate').checked,
                 target_language: document.getElementById('targetLang').value,
                 embed_subtitles: document.getElementById('optEmbed').checked,
+                embed_logo: document.getElementById('optLogo').checked,
                 video_bitrate: document.getElementById('videoQuality').value
             };
+
+            const payload = {
+                url: url,
+                options: options
+            };
+
+            // 如果有 logo 则添加
+            if (logoBase64 && document.getElementById('optLogo').checked) {
+                payload.logo_base64 = logoBase64;
+            }
 
             try {
                 const response = await fetch(`${API_URL}/api/tasks`, {
@@ -574,10 +621,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        url: url,
-                        options: options
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 const data = await response.json();
