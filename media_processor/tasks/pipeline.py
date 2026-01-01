@@ -185,13 +185,15 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
         return segments
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-5-mini")
+
     if not OPENAI_API_KEY:
         logger.warning(f"[{task_id}] 没有 OpenAI API Key，跳过翻译")
         return segments
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    logger.info(f"[{task_id}] 开始翻译 {len(segments)} 个片段到 {target_lang}")
+    logger.info(f"[{task_id}] 开始翻译 {len(segments)} 个片段到 {target_lang}，使用模型: {TEXT_MODEL}")
 
     # 批量翻译
     batch_size = 20
@@ -208,12 +210,12 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=TEXT_MODEL,
                 messages=[
                     {"role": "system", "content": "你是专业的字幕翻译。翻译要自然流畅，符合目标语言习惯。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
+                temperature=1,  # gpt-5-mini 要求 temperature=1
             )
 
             translated_text = response.choices[0].message.content.strip()
