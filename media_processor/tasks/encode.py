@@ -2,14 +2,15 @@
 编码任务 - 使用 ffmpeg 进行视频编码和字幕嵌入
 """
 import os
-import logging
 import platform
 import subprocess
 import tempfile
 from typing import Optional, List, Dict
 from celery import shared_task
 
-logger = logging.getLogger(__name__)
+from media_processor.logging import get_task_logger
+
+logger = get_task_logger(__name__)
 
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", tempfile.gettempdir())
 
@@ -79,7 +80,10 @@ def encode_video(
             "file_size": 12345678
         }
     """
-    logger.info(f"[{task_id}] 开始编码: {video_path}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("encoding")
+    logger.info(f"开始编码: {video_path}")
 
     self.update_state(state="ENCODING", meta={"progress": 0, "stage": "encoding"})
 
@@ -93,7 +97,7 @@ def encode_video(
         # 1. 生成 ASS 字幕文件
         if segments:
             _generate_ass_file(segments, subtitle_path, video_path)
-            logger.info(f"[{task_id}] 字幕文件已生成: {subtitle_path}")
+            logger.info(f"字幕文件已生成: {subtitle_path}")
 
         # 2. 获取视频尺寸
         width, height = _get_video_dimensions(video_path)
@@ -107,7 +111,7 @@ def encode_video(
 
         # 3. 构建 ffmpeg 命令
         encoder = _get_video_encoder()
-        logger.info(f"[{task_id}] 使用编码器: {encoder}")
+        logger.info(f"使用编码器: {encoder}")
 
         filter_parts = []
 
@@ -142,7 +146,7 @@ def encode_video(
         cmd.append(output_path)
 
         # 4. 执行编码
-        logger.info(f"[{task_id}] 执行 ffmpeg 命令...")
+        logger.info(f"执行 ffmpeg 命令...")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -154,7 +158,8 @@ def encode_video(
             raise Exception(f"ffmpeg 失败: {result.stderr[-500:]}")
 
         file_size = os.path.getsize(output_path)
-        logger.info(f"[{task_id}] 编码完成: {output_path} ({file_size / 1024 / 1024:.2f} MB)")
+        logger.info(f"编码完成: {output_path} ({file_size / 1024 / 1024:.2f} MB)")
+        logger.clear()
 
         return {
             "output_path": output_path,
@@ -164,11 +169,13 @@ def encode_video(
         }
 
     except subprocess.TimeoutExpired:
-        logger.error(f"[{task_id}] 编码超时")
+        logger.error(f"编码超时")
+        logger.clear()
         raise
 
     except Exception as e:
-        logger.error(f"[{task_id}] 编码失败: {e}")
+        logger.error(f"编码失败: {e}")
+        logger.clear()
         raise
 
 

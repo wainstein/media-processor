@@ -16,6 +16,8 @@ from celery.result import AsyncResult
 
 from media_processor.celery_app import celery_app
 from media_processor.tasks.pipeline import process_video_pipeline, process_file_pipeline
+from media_processor.logging import setup_structured_logging
+from media_processor.api.logs import router as logs_router
 
 # 配置
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
@@ -36,6 +38,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(logs_router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize structured logging on startup"""
+    setup_structured_logging()
 
 
 # ==================== 数据模型 ====================

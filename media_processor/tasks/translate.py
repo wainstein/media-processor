@@ -2,12 +2,13 @@
 翻译任务 - 使用 OpenAI API 进行翻译
 """
 import os
-import logging
 from typing import List, Dict, Optional
 from celery import shared_task
 import openai
 
-logger = logging.getLogger(__name__)
+from media_processor.logging import get_task_logger
+
+logger = get_task_logger(__name__)
 
 # OpenAI 配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("OPENAI_TOKEN"))
@@ -36,7 +37,10 @@ def translate_segments(
     Returns:
         带翻译的片段列表 [{"start": 0, "end": 2, "text": "...", "translation": "..."}, ...]
     """
-    logger.info(f"[{task_id}] 开始翻译: {len(segments)} 个片段 -> {target_language}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("translating")
+    logger.info(f"开始翻译: {len(segments)} 个片段 -> {target_language}")
 
     self.update_state(state="TRANSLATING", meta={"progress": 0, "stage": "translating"})
 
@@ -82,13 +86,14 @@ def translate_segments(
                 translated_segments.append(seg)
 
         except Exception as e:
-            logger.error(f"[{task_id}] 翻译失败 (chunk {chunk_idx}): {e}")
+            logger.error(f"翻译失败 (chunk {chunk_idx}): {e}")
             # 失败时保留原文
             for seg in chunk:
                 seg["translation"] = seg["text"]
                 translated_segments.append(seg)
 
-    logger.info(f"[{task_id}] 翻译完成")
+    logger.info(f"翻译完成")
+    logger.clear()
     return translated_segments
 
 
@@ -183,5 +188,7 @@ def translate_text(
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        logger.error(f"[{task_id}] 文本翻译失败: {e}")
+        logger.set_task(task_id)
+        logger.error(f"文本翻译失败: {e}")
+        logger.clear()
         return text

@@ -2,7 +2,6 @@
 处理管道 - 串联所有任务
 """
 import os
-import logging
 import uuid
 from typing import Optional, Dict, Any
 from celery import shared_task
@@ -13,8 +12,9 @@ from media_processor.tasks import download as download_module
 from media_processor.tasks import transcribe as transcribe_module
 from media_processor.tasks import translate as translate_module
 from media_processor.tasks import encode as encode_module
+from media_processor.logging import get_task_logger
 
-logger = logging.getLogger(__name__)
+logger = get_task_logger(__name__)
 
 
 def _do_download(self_task, url: str, task_id: str) -> dict:
@@ -184,16 +184,29 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
     if not segments:
         return segments
 
+    # 检查源语言是否与目标语言相同，如果相同则跳过翻译
+    source_lang = segments[0].get("language", "").lower() if segments else ""
+    # 处理语言代码变体 (zh, zh-cn, zh-tw, chinese 都算中文)
+    source_lang_normalized = "zh" if source_lang in ("zh", "zh-cn", "zh-tw", "chinese") else source_lang
+    target_lang_normalized = "zh" if target_lang.lower() in ("zh", "zh-cn", "zh-tw", "chinese") else target_lang.lower()
+
+    if source_lang_normalized == target_lang_normalized:
+        logger.info(f"源语言 ({source_lang}) 与目标语言 ({target_lang}) 相同，跳过翻译")
+        # 返回原始 segments，translated 字段留空
+        for seg in segments:
+            seg["translated"] = ""
+        return segments
+
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-5-mini")
 
     if not OPENAI_API_KEY:
-        logger.warning(f"[{task_id}] 没有 OpenAI API Key，跳过翻译")
+        logger.warning(f"没有 OpenAI API Key，跳过翻译")
         return segments
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    logger.info(f"[{task_id}] 开始翻译 {len(segments)} 个片段到 {target_lang}，使用模型: {TEXT_MODEL}")
+    logger.info(f"开始翻译 {len(segments)} 个片段到 {target_lang}，使用模型: {TEXT_MODEL}")
 
     # 批量翻译
     batch_size = 20
@@ -441,12 +454,16 @@ def process_video_pipeline(
     task_id = self.request.id or str(uuid.uuid4())
     options = options or {}
 
-    logger.info(f"[{task_id}] 开始处理管道: {url}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("initializing")
+    logger.info(f"开始处理管道: {url}")
 
     transcribe_result = {}
 
     try:
         # ==================== 阶段 1: 下载 ====================
+        logger.set_stage("downloading")
         self.update_state(state="DOWNLOADING", meta={"stage": "downloading", "progress": 0})
 
         download_result = _do_download(self, url, task_id)
@@ -455,11 +472,12 @@ def process_video_pipeline(
         title = download_result.get("title", "")
         description = download_result.get("description", "")
 
-        logger.info(f"[{task_id}] 下载完成: {video_path}")
+        logger.info(f"下载完成: {video_path}")
 
         # ==================== 阶段 2: 转录 ====================
         segments = []
         if options.get("embed_subtitles", True):
+            logger.set_stage("transcribing")
             self.update_state(state="TRANSCRIBING", meta={"stage": "transcribing", "progress": 20})
 
             transcribe_result = _do_transcribe(self, video_path, task_id)
@@ -467,19 +485,21 @@ def process_video_pipeline(
             segments = transcribe_result.get("segments", [])
             detected_language = transcribe_result.get("language", "unknown")
 
-            logger.info(f"[{task_id}] 转录完成: {len(segments)} 片段, 语言: {detected_language}")
+            logger.info(f"转录完成: {len(segments)} 片段, 语言: {detected_language}")
 
             # ==================== 阶段 3: 翻译 ====================
             if options.get("translate", True) and segments:
+                logger.set_stage("translating")
                 self.update_state(state="TRANSLATING", meta={"stage": "translating", "progress": 50})
 
                 target_lang = options.get("target_language", "zh")
 
                 segments = _do_translate(self, segments, task_id, target_lang, description)
 
-                logger.info(f"[{task_id}] 翻译完成")
+                logger.info(f"翻译完成")
 
         # ==================== 阶段 4: 编码 ====================
+        logger.set_stage("encoding")
         self.update_state(state="ENCODING", meta={"stage": "encoding", "progress": 70})
 
         encode_result = _do_encode(
@@ -496,7 +516,7 @@ def process_video_pipeline(
         output_path = encode_result["output_path"]
         subtitle_path = encode_result.get("subtitle_path")
 
-        logger.info(f"[{task_id}] 编码完成: {output_path}")
+        logger.info(f"编码完成: {output_path}")
 
         # ==================== 完成 ====================
         result = {
@@ -518,15 +538,18 @@ def process_video_pipeline(
         if callback_url:
             try:
                 requests.post(callback_url, json=result, timeout=10)
-                logger.info(f"[{task_id}] 回调成功: {callback_url}")
+                logger.info(f"回调成功: {callback_url}")
             except Exception as e:
-                logger.warning(f"[{task_id}] 回调失败: {e}")
+                logger.warning(f"回调失败: {e}")
 
-        logger.info(f"[{task_id}] 管道完成")
+        logger.set_stage("completed")
+        logger.info(f"管道完成")
+        logger.clear()
         return result
 
     except Exception as e:
-        logger.error(f"[{task_id}] 管道失败: {e}")
+        logger.set_stage("failed")
+        logger.error(f"管道失败: {e}")
 
         error_result = {
             "task_id": task_id,
@@ -565,7 +588,10 @@ def process_file_pipeline(
     task_id = self.request.id or str(uuid.uuid4())
     options = options or {}
 
-    logger.info(f"[{task_id}] 开始处理文件: {file_path}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("initializing")
+    logger.info(f"开始处理文件: {file_path}")
 
     transcribe_result = {}
 
@@ -573,6 +599,7 @@ def process_file_pipeline(
         # ==================== 阶段 1: 转录 ====================
         segments = []
         if options.get("embed_subtitles", True):
+            logger.set_stage("transcribing")
             self.update_state(state="TRANSCRIBING", meta={"stage": "transcribing", "progress": 10})
 
             transcribe_result = _do_transcribe(self, file_path, task_id)
@@ -580,19 +607,21 @@ def process_file_pipeline(
             segments = transcribe_result.get("segments", [])
             detected_language = transcribe_result.get("language", "unknown")
 
-            logger.info(f"[{task_id}] 转录完成: {len(segments)} 片段, 语言: {detected_language}")
+            logger.info(f"转录完成: {len(segments)} 片段, 语言: {detected_language}")
 
             # ==================== 阶段 2: 翻译 ====================
             if options.get("translate", True) and segments:
+                logger.set_stage("translating")
                 self.update_state(state="TRANSLATING", meta={"stage": "translating", "progress": 40})
 
                 target_lang = options.get("target_language", "zh")
 
                 segments = _do_translate(self, segments, task_id, target_lang, "")
 
-                logger.info(f"[{task_id}] 翻译完成")
+                logger.info(f"翻译完成")
 
         # ==================== 阶段 3: 编码 ====================
+        logger.set_stage("encoding")
         self.update_state(state="ENCODING", meta={"stage": "encoding", "progress": 70})
 
         encode_result = _do_encode(
@@ -609,7 +638,7 @@ def process_file_pipeline(
         output_path = encode_result["output_path"]
         subtitle_path = encode_result.get("subtitle_path")
 
-        logger.info(f"[{task_id}] 编码完成: {output_path}")
+        logger.info(f"编码完成: {output_path}")
 
         # ==================== 完成 ====================
         result = {
@@ -628,15 +657,18 @@ def process_file_pipeline(
         if callback_url:
             try:
                 requests.post(callback_url, json=result, timeout=10)
-                logger.info(f"[{task_id}] 回调成功: {callback_url}")
+                logger.info(f"回调成功: {callback_url}")
             except Exception as e:
-                logger.warning(f"[{task_id}] 回调失败: {e}")
+                logger.warning(f"回调失败: {e}")
 
-        logger.info(f"[{task_id}] 文件处理完成")
+        logger.set_stage("completed")
+        logger.info(f"文件处理完成")
+        logger.clear()
         return result
 
     except Exception as e:
-        logger.error(f"[{task_id}] 文件处理失败: {e}")
+        logger.set_stage("failed")
+        logger.error(f"文件处理失败: {e}")
 
         error_result = {
             "task_id": task_id,

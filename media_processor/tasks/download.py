@@ -3,13 +3,14 @@
 """
 import os
 import json
-import logging
 import tempfile
 import subprocess
 from typing import Optional
 from celery import shared_task
 
-logger = logging.getLogger(__name__)
+from media_processor.logging import get_task_logger
+
+logger = get_task_logger(__name__)
 
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", tempfile.gettempdir())
 
@@ -38,7 +39,10 @@ def download_video(
             "thumbnail_path": "/path/to/thumb.jpg"
         }
     """
-    logger.info(f"[{task_id}] 开始下载: {url}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("downloading")
+    logger.info(f"开始下载: {url}")
 
     # 创建任务专属目录
     task_dir = os.path.join(OUTPUT_DIR, task_id)
@@ -92,7 +96,7 @@ def download_video(
 
             cmd.append(url)
 
-            logger.info(f"[{task_id}] 尝试格式: {fmt or 'auto'}")
+            logger.info(f"尝试格式: {fmt or 'auto'}")
 
             result = subprocess.run(
                 cmd,
@@ -102,24 +106,24 @@ def download_video(
             )
 
             if result.returncode == 0:
-                logger.info(f"[{task_id}] 格式 {fmt or 'auto'} 下载成功")
+                logger.info(f"格式 {fmt or 'auto'} 下载成功")
                 break  # 成功，跳出循环
 
             last_error = result.stderr
-            logger.warning(f"[{task_id}] 格式 {fmt or 'auto'} 失败: {last_error[:200]}...")
+            logger.warning(f"格式 {fmt or 'auto'} 失败: {last_error[:200]}...")
 
         except subprocess.TimeoutExpired:
             last_error = "下载超时"
-            logger.warning(f"[{task_id}] 格式 {fmt or 'auto'} 超时")
+            logger.warning(f"格式 {fmt or 'auto'} 超时")
             continue
         except Exception as e:
             last_error = str(e)
-            logger.warning(f"[{task_id}] 格式 {fmt or 'auto'} 异常: {e}")
+            logger.warning(f"格式 {fmt or 'auto'} 异常: {e}")
             continue
 
     # 检查是否成功
     if result is None or result.returncode != 0:
-        logger.error(f"[{task_id}] 所有格式都失败: {last_error}")
+        logger.error(f"所有格式都失败: {last_error}")
         raise Exception(f"yt-dlp 所有格式都失败: {last_error}")
 
     # 解析输出
@@ -127,7 +131,7 @@ def download_video(
         info = json.loads(result.stdout.strip().split('\n')[-1])
     except json.JSONDecodeError:
         info = {}
-        logger.warning(f"[{task_id}] 无法解析 yt-dlp JSON 输出")
+        logger.warning(f"无法解析 yt-dlp JSON 输出")
 
     # 查找下载的视频文件
     video_path = None
@@ -154,7 +158,8 @@ def download_video(
             thumb_found = os.path.join(task_dir, f)
             break
 
-    logger.info(f"[{task_id}] 下载完成: {video_path}")
+    logger.info(f"下载完成: {video_path}")
+    logger.clear()
 
     return {
         "video_path": video_path,

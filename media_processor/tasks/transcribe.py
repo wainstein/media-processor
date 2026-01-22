@@ -2,12 +2,13 @@
 转录任务 - 使用 Whisper 进行语音识别
 """
 import os
-import logging
 import platform
 from typing import Optional, List, Dict
 from celery import shared_task
 
-logger = logging.getLogger(__name__)
+from media_processor.logging import get_task_logger
+
+logger = get_task_logger(__name__)
 
 # Whisper 模型配置
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "turbo")
@@ -80,7 +81,10 @@ def transcribe_audio(
             "duration": 180
         }
     """
-    logger.info(f"[{task_id}] 开始转录: {video_path}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("transcribing")
+    logger.info(f"开始转录: {video_path}")
 
     self.update_state(state="TRANSCRIBING", meta={"progress": 0, "stage": "transcribing"})
 
@@ -105,7 +109,7 @@ def transcribe_audio(
                 "language": result.get("language", "unknown")
             })
 
-        logger.info(f"[{task_id}] 转录完成: {len(segments)} 个片段")
+        logger.info(f"转录完成: {len(segments)} 个片段")
 
         return {
             "segments": segments,
@@ -114,8 +118,10 @@ def transcribe_audio(
         }
 
     except Exception as e:
-        logger.error(f"[{task_id}] 转录失败: {e}")
+        logger.error(f"转录失败: {e}")
         raise
+    finally:
+        logger.clear()
 
 
 @shared_task(bind=True, name="media_processor.tasks.transcribe.detect_language")
@@ -136,7 +142,10 @@ def detect_language(
     Returns:
         语言代码 (如 "en", "zh", "ja")
     """
-    logger.info(f"[{task_id}] 检测语言: {video_path}")
+    # Set task context for structured logging
+    logger.set_task(task_id)
+    logger.set_stage("language_detection")
+    logger.info(f"检测语言: {video_path}")
 
     try:
         import whisper
@@ -154,9 +163,11 @@ def detect_language(
         _, probs = model.detect_language(mel)
         detected_lang = max(probs, key=probs.get)
 
-        logger.info(f"[{task_id}] 检测到语言: {detected_lang}")
+        logger.info(f"检测到语言: {detected_lang}")
         return detected_lang
 
     except Exception as e:
-        logger.error(f"[{task_id}] 语言检测失败: {e}")
+        logger.error(f"语言检测失败: {e}")
         return "unknown"
+    finally:
+        logger.clear()
