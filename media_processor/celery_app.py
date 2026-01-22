@@ -3,10 +3,18 @@ Celery 应用配置
 """
 import os
 from celery import Celery
+from celery.signals import worker_process_init
 from kombu import Queue
 
 # Redis 配置
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+
+@worker_process_init.connect
+def init_worker(**kwargs):
+    """Worker 进程启动时初始化结构化日志"""
+    from media_processor.logging import setup_structured_logging
+    setup_structured_logging()
 
 # 创建 Celery 应用
 celery_app = Celery(
