@@ -17,6 +17,90 @@ from media_processor.logging import get_task_logger
 logger = get_task_logger(__name__)
 
 
+def _is_twitter_url(url: str) -> bool:
+    """检测是否为 Twitter/X URL"""
+    import re
+    return bool(re.search(r'(twitter\.com|x\.com)/\w+/status/\d+', url))
+
+
+def _download_twitter(url: str, task_id: str, task_dir: str) -> dict:
+    """
+    使用 fxtwitter API 下载 Twitter 视频
+
+    Returns:
+        与 yt-dlp 相同的 dict 结构: {video_path, title, description, duration, thumbnail_path}
+    """
+    import re
+
+    logger.info(f"[{task_id}] 尝试 fixupx 下载 Twitter 视频: {url}")
+
+    # 解析 tweet ID
+    match = re.search(r'(twitter\.com|x\.com)/(\w+)/status/(\d+)', url)
+    if not match:
+        raise ValueError(f"无法解析 Twitter URL: {url}")
+
+    username = match.group(2)
+    tweet_id = match.group(3)
+
+    # 调用 fxtwitter API
+    api_url = f"https://api.fxtwitter.com/{username}/status/{tweet_id}"
+    resp = requests.get(api_url, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    tweet = data.get("tweet", {})
+    media_list = tweet.get("media", {}).get("all", [])
+
+    # 找到最高码率的 mp4 视频
+    best_video_url = None
+    best_bitrate = 0
+    for media in media_list:
+        if media.get("type") == "video":
+            # 直接使用 url 字段（最高质量）
+            best_video_url = media.get("url")
+            best_bitrate = media.get("bitrate", 0)
+            break
+
+    if not best_video_url:
+        raise ValueError("推文中没有找到视频")
+
+    # 下载视频
+    video_path = os.path.join(task_dir, "video.mp4")
+    logger.info(f"[{task_id}] 下载视频: {best_video_url[:80]}...")
+    video_resp = requests.get(best_video_url, stream=True, timeout=120)
+    video_resp.raise_for_status()
+    with open(video_path, "wb") as f:
+        for chunk in video_resp.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+        raise ValueError("视频下载失败：文件为空")
+
+    # 下载缩略图
+    thumbnail_path = None
+    thumb_url = tweet.get("media", {}).get("all", [{}])[0].get("thumbnail_url")
+    if thumb_url:
+        try:
+            thumb_path = os.path.join(task_dir, "video.jpg")
+            thumb_resp = requests.get(thumb_url, timeout=15)
+            thumb_resp.raise_for_status()
+            with open(thumb_path, "wb") as f:
+                f.write(thumb_resp.content)
+            thumbnail_path = thumb_path
+        except Exception as e:
+            logger.warning(f"[{task_id}] 缩略图下载失败: {e}")
+
+    logger.info(f"[{task_id}] fixupx 下载成功: {video_path}")
+
+    return {
+        "video_path": video_path,
+        "title": tweet.get("text", "")[:100],
+        "description": tweet.get("text", ""),
+        "duration": media_list[0].get("duration", 0) if media_list else 0,
+        "thumbnail_path": thumbnail_path,
+    }
+
+
 def _do_download(self_task, url: str, task_id: str) -> dict:
     """直接执行下载（绕过 Celery）"""
     import os
@@ -30,6 +114,14 @@ def _do_download(self_task, url: str, task_id: str) -> dict:
 
     task_dir = os.path.join(OUTPUT_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
+
+    # Twitter/X URL 优先使用 fixupx API
+    if _is_twitter_url(url):
+        try:
+            return _download_twitter(url, task_id, task_dir)
+        except Exception as e:
+            logger.warning(f"[{task_id}] fixupx 下载失败: {e}，回退 yt-dlp")
+
     output_template = os.path.join(task_dir, "video.%(ext)s")
 
     format_fallbacks = [
