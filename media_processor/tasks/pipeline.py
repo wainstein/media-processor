@@ -486,10 +486,12 @@ def _do_encode(self_task, video_path: str, task_id: str, segments: list = None,
 
     # libx264 需要额外参数
     if video_codec == "libx264":
-        cmd.extend(["-preset", "medium", "-crf", "23"])
+        cmd.extend(["-preset", "medium", "-crf", "23",
+                     "-maxrate", video_bitrate, "-bufsize", str(int(video_bitrate.replace("k", "")) * 2) + "k"])
+    else:
+        cmd.extend(["-b:v", video_bitrate])
 
     cmd.extend([
-        "-b:v", video_bitrate,
         "-c:a", "aac",
         "-b:a", "64k",
         "-movflags", "+faststart",
