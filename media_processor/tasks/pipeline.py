@@ -378,14 +378,17 @@ def _do_correct_transcript(self_task, segments: list, task_id: str, context: str
         )
 
         try:
-            response = client.chat.completions.create(
+            kwargs = dict(
                 model=TEXT_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": numbered_text + context_hint}
                 ],
-                temperature=0.3,
             )
+            # GPT-5 系列只支持 temperature=1，不传此参数
+            if "gpt-5" not in TEXT_MODEL:
+                kwargs["temperature"] = 0.3
+            response = client.chat.completions.create(**kwargs)
 
             result_text = response.choices[0].message.content.strip()
 
