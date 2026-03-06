@@ -220,6 +220,53 @@ def _do_download(self_task, url: str, task_id: str) -> dict:
     }
 
 
+def _detect_language_skip_silence(model, video_path: str, task_id: str) -> str | None:
+    """用 ffmpeg 跳过开头静音，然后用 Whisper 检测语言"""
+    import subprocess
+    import whisper
+
+    try:
+        # 1. ffmpeg silencedetect 找到静音结束点
+        cmd = [
+            "ffmpeg", "-i", video_path, "-af",
+            "silencedetect=noise=-30dB:d=1.0",
+            "-f", "null", "-"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        # 解析 silence_end 时间戳，取第一个（即开头静音结束）
+        speech_start = 0.0
+        for line in result.stderr.split('\n'):
+            if 'silence_end' in line:
+                parts = line.split('silence_end:')
+                if len(parts) > 1:
+                    t = float(parts[1].split('|')[0].strip())
+                    if t <= 60:
+                        speech_start = t
+                        break
+
+        if speech_start < 1.0:
+            return None  # 没有明显的开头静音，用默认行为
+
+        # 2. 从 speech_start 处开始加载 30s 音频做语言检测
+        audio = whisper.load_audio(video_path)
+        sample_start = int(speech_start * 16000)
+        sample_end = sample_start + 30 * 16000
+        audio_segment = audio[sample_start:sample_end]
+        audio_segment = whisper.pad_or_trim(audio_segment)
+
+        mel = whisper.log_mel_spectrogram(audio_segment).to(model.device)
+        _, probs = model.detect_language(mel)
+        detected = max(probs, key=probs.get)
+
+        logger.info(f"[{task_id}] 跳过 {speech_start:.1f}s 静音后检测语言: {detected}")
+        return detected
+
+    except Exception as e:
+        logger.warning(f"[{task_id}] 静音检测/语言检测失败，回退默认行为: {e}")
+        return None
+
+
 def _do_transcribe(self_task, video_path: str, task_id: str) -> dict:
     """直接执行转录（绕过 Celery）"""
     import whisper
@@ -246,8 +293,15 @@ def _do_transcribe(self_task, video_path: str, task_id: str) -> dict:
         device = "cpu"
         model = whisper.load_model(WHISPER_MODEL, device=device)
 
+    # 跳过开头静音检测语言，避免 Whisper 用静音段误判
+    detected_lang = _detect_language_skip_silence(model, video_path, task_id)
+    if detected_lang:
+        logger.info(f"[{task_id}] 使用检测到的语言: {detected_lang}")
+    else:
+        logger.info(f"[{task_id}] 使用 Whisper 默认语言检测")
+
     logger.info(f"[{task_id}] 开始转录...")
-    result = model.transcribe(video_path, language=None, task="transcribe")
+    result = model.transcribe(video_path, language=detected_lang, task="transcribe")
 
     detected_language = result.get("language", "unknown")
 
@@ -267,6 +321,106 @@ def _do_transcribe(self_task, video_path: str, task_id: str) -> dict:
         "language": detected_language,
         "text": result.get("text", ""),
     }
+
+
+def _do_correct_transcript(self_task, segments: list, task_id: str, context: str = "") -> list:
+    """用 LLM 校正 Whisper 转录中的听写错误（如专有名词、同音词等）"""
+    import openai
+
+    if not segments:
+        return segments
+
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    TEXT_MODEL = os.getenv("TEXT_MODEL", "qwen/qwen3-30b-a3b-2507")
+    LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "")
+    LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "lm-studio")
+
+    if not OPENAI_API_KEY and not LOCAL_LLM_BASE_URL:
+        logger.warning(f"[{task_id}] 没有 LLM API Key，跳过转录校正")
+        return segments
+
+    if LOCAL_LLM_BASE_URL:
+        client = openai.OpenAI(base_url=LOCAL_LLM_BASE_URL, api_key=LOCAL_LLM_API_KEY)
+    else:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+    logger.info(f"[{task_id}] 开始 LLM 转录校正: {len(segments)} 个片段, 模型: {TEXT_MODEL}")
+
+    # 分批处理，每批最多 30 个片段
+    batch_size = 30
+    corrected_segments = []
+
+    for i in range(0, len(segments), batch_size):
+        batch = segments[i:i + batch_size]
+
+        # 构建带编号的文本
+        numbered_lines = []
+        for j, seg in enumerate(batch):
+            numbered_lines.append(f"==SEGMENT_{j}==\n{seg['text'].strip()}")
+        numbered_text = "\n".join(numbered_lines)
+
+        context_hint = ""
+        if context:
+            context_hint = f"\n\n视频标题/描述（供参考上下文）:\n{context[:500]}"
+
+        system_prompt = (
+            "你是一名专业的语音转录校正员。下面是 Whisper 语音识别的输出文本。\n"
+            "请利用全文上下文，纠正明显的语音识别错误，包括但不限于：\n"
+            "- 专有名词被误听为常见词（如 YOLO 被听成 no-go，Tesla 被听成 test la）\n"
+            "- 同音词/近音词误用\n"
+            "- 技术术语、品牌名、人名等被错误拼写\n"
+            "- 不合理的断句导致的语义错误\n\n"
+            "规则：\n"
+            "1. 只修正明显的识别错误，不要改写原意或润色语句\n"
+            "2. 如果某段文本没有问题，原样输出即可\n"
+            "3. 保留每段前的 ==SEGMENT_N== 标记，格式不变\n"
+            "4. 不要添加任何解释或注释"
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model=TEXT_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": numbered_text + context_hint}
+                ],
+                temperature=0.3,
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # 解析 ==SEGMENT_N== 标记
+            corrected_map = {}
+            parts = result_text.split("==SEGMENT_")
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    idx_str, corrected_text = part.split("==", 1)
+                    idx = int(idx_str.strip())
+                    corrected_map[idx] = corrected_text.strip()
+                except Exception:
+                    continue
+
+            # 应用校正结果
+            for j, seg in enumerate(batch):
+                new_seg = seg.copy()
+                if j in corrected_map and corrected_map[j]:
+                    original = seg["text"].strip()
+                    corrected = corrected_map[j]
+                    if original != corrected:
+                        logger.info(f"[{task_id}] 校正: '{original}' -> '{corrected}'")
+                    new_seg["text"] = corrected
+                corrected_segments.append(new_seg)
+
+        except Exception as e:
+            logger.error(f"[{task_id}] 转录校正批次失败: {e}")
+            # 失败时保留原文
+            corrected_segments.extend(batch)
+
+    logger.info(f"[{task_id}] 转录校正完成")
+    return corrected_segments
 
 
 def _do_translate(self_task, segments: list, task_id: str, target_lang: str, context: str = "") -> list:
@@ -290,13 +444,18 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
         return segments
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-5-mini")
+    TEXT_MODEL = os.getenv("TEXT_MODEL", "qwen/qwen3-30b-a3b-2507")
+    LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "")
+    LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "lm-studio")
 
-    if not OPENAI_API_KEY:
+    if not OPENAI_API_KEY and not LOCAL_LLM_BASE_URL:
         logger.warning(f"没有 OpenAI API Key，跳过翻译")
         return segments
 
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    if LOCAL_LLM_BASE_URL:
+        client = openai.OpenAI(base_url=LOCAL_LLM_BASE_URL, api_key=LOCAL_LLM_API_KEY)
+    else:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
     logger.info(f"开始翻译 {len(segments)} 个片段到 {target_lang}，使用模型: {TEXT_MODEL}")
 
@@ -320,7 +479,6 @@ def _do_translate(self_task, segments: list, task_id: str, target_lang: str, con
                     {"role": "system", "content": "你是专业的字幕翻译。翻译要自然流畅，符合目标语言习惯。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=1,  # gpt-5-mini 要求 temperature=1
             )
 
             translated_text = response.choices[0].message.content.strip()
@@ -581,6 +739,16 @@ def process_video_pipeline(
 
             logger.info(f"转录完成: {len(segments)} 片段, 语言: {detected_language}")
 
+            # ==================== 阶段 2.5: 转录校正 ====================
+            if segments:
+                logger.set_stage("correcting")
+                self.update_state(state="CORRECTING", meta={"stage": "correcting", "progress": 35})
+
+                context_for_correction = f"{title}\n{description}".strip()
+                segments = _do_correct_transcript(self, segments, task_id, context_for_correction)
+
+                logger.info(f"转录校正完成")
+
             # ==================== 阶段 3: 翻译 ====================
             if options.get("translate", True) and segments:
                 logger.set_stage("translating")
@@ -702,6 +870,15 @@ def process_file_pipeline(
             detected_language = transcribe_result.get("language", "unknown")
 
             logger.info(f"转录完成: {len(segments)} 片段, 语言: {detected_language}")
+
+            # ==================== 阶段 1.5: 转录校正 ====================
+            if segments:
+                logger.set_stage("correcting")
+                self.update_state(state="CORRECTING", meta={"stage": "correcting", "progress": 25})
+
+                segments = _do_correct_transcript(self, segments, task_id)
+
+                logger.info(f"转录校正完成")
 
             # ==================== 阶段 2: 翻译 ====================
             if options.get("translate", True) and segments:

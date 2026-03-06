@@ -13,6 +13,8 @@ logger = get_task_logger(__name__)
 # OpenAI 配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("OPENAI_TOKEN"))
 TRANSLATE_MODEL = os.getenv("TRANSLATE_MODEL", "gpt-4.1-mini")
+LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "")
+LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY", "lm-studio")
 
 
 @shared_task(bind=True, name="media_processor.tasks.translate.translate_segments")
@@ -44,10 +46,13 @@ def translate_segments(
 
     self.update_state(state="TRANSLATING", meta={"progress": 0, "stage": "translating"})
 
-    if not OPENAI_API_KEY:
+    if not OPENAI_API_KEY and not LOCAL_LLM_BASE_URL:
         raise ValueError("OPENAI_API_KEY 未设置")
 
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    if LOCAL_LLM_BASE_URL:
+        client = openai.OpenAI(base_url=LOCAL_LLM_BASE_URL, api_key=LOCAL_LLM_API_KEY)
+    else:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
     # 按批次翻译
     translated_segments = []
@@ -141,8 +146,7 @@ def _batch_translate(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": combined_text}
         ],
-        temperature=0.3,
-        max_tokens=4000
+        max_tokens=4000,
     )
 
     result_text = response.choices[0].message.content.strip()
@@ -169,11 +173,14 @@ def translate_text(
     if not text or not text.strip():
         return text
 
-    if not OPENAI_API_KEY:
+    if not OPENAI_API_KEY and not LOCAL_LLM_BASE_URL:
         return text
 
     try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        if LOCAL_LLM_BASE_URL:
+            client = openai.OpenAI(base_url=LOCAL_LLM_BASE_URL, api_key=LOCAL_LLM_API_KEY)
+        else:
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
         response = client.chat.completions.create(
             model=TRANSLATE_MODEL,
@@ -181,8 +188,7 @@ def translate_text(
                 {"role": "system", "content": f"将以下文本翻译成中文，只返回翻译结果:"},
                 {"role": "user", "content": text}
             ],
-            temperature=0.3,
-            max_tokens=1000
+            max_tokens=1000,
         )
 
         return response.choices[0].message.content.strip()
