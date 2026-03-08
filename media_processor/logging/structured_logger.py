@@ -270,4 +270,4 @@ def setup_structured_logging(level: int = logging.INFO):
     console_handler.setLevel(level)
     root_logger.addHandler(console_handler)
 
-    root_logger.info("Structured logging initialized", extra={"stage": "startup"})
+    root_logger.debug("Structured logging initialized", extra={"stage": "startup"})
