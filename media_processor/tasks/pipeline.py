@@ -23,6 +23,16 @@ def _is_twitter_url(url: str) -> bool:
     return bool(re.search(r'(twitter\.com|x\.com)/\w+/status/\d+', url))
 
 
+def _find_best_video(media_list: list) -> str | None:
+    """从 fxtwitter media 列表中找最高码率的 mp4 视频 URL"""
+    for media in media_list:
+        if media.get("type") in ("video", "gif"):
+            url = media.get("url")
+            if url:
+                return url
+    return None
+
+
 def _download_twitter(url: str, task_id: str, task_dir: str) -> dict:
     """
     使用 fxtwitter API 下载 Twitter 视频
@@ -52,14 +62,35 @@ def _download_twitter(url: str, task_id: str, task_dir: str) -> dict:
     media_list = tweet.get("media", {}).get("all", [])
 
     # 找到最高码率的 mp4 视频
-    best_video_url = None
-    best_bitrate = 0
-    for media in media_list:
-        if media.get("type") == "video":
-            # 直接使用 url 字段（最高质量）
-            best_video_url = media.get("url")
-            best_bitrate = media.get("bitrate", 0)
-            break
+    best_video_url = _find_best_video(media_list)
+
+    # Fallback 1: 引用推文 (quote tweet)
+    if not best_video_url:
+        quote = tweet.get("quote", {})
+        if quote:
+            quote_media = quote.get("media", {}).get("all", [])
+            best_video_url = _find_best_video(quote_media)
+            if best_video_url:
+                logger.info(f"[{task_id}] 从引用推文获取视频")
+
+    # Fallback 2: 文本中嵌入的推文链接
+    if not best_video_url:
+        tweet_text = tweet.get("text", "")
+        embedded_match = re.search(r'https?://(?:twitter\.com|x\.com)/(\w+)/status/(\d+)', tweet_text)
+        if embedded_match:
+            embedded_user, embedded_id = embedded_match.groups()
+            if embedded_id != tweet_id:
+                logger.info(f"[{task_id}] 主推文无视频，尝试嵌入链接: {embedded_user}/status/{embedded_id}")
+                try:
+                    embedded_resp = requests.get(f"https://api.fxtwitter.com/{embedded_user}/status/{embedded_id}", timeout=15)
+                    embedded_resp.raise_for_status()
+                    embedded_tweet = embedded_resp.json().get("tweet", {})
+                    embedded_media = embedded_tweet.get("media", {}).get("all", [])
+                    best_video_url = _find_best_video(embedded_media)
+                    if best_video_url:
+                        logger.info(f"[{task_id}] 从嵌入链接获取视频")
+                except Exception as e:
+                    logger.warning(f"[{task_id}] 嵌入链接 fallback 失败: {e}")
 
     if not best_video_url:
         raise ValueError("推文中没有找到视频")
