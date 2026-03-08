@@ -130,8 +130,25 @@ case "$MODE" in
 
     stop)
         echo -e "${YELLOW}停止所有服务...${NC}"
+        # 先发 SIGTERM
         pkill -f "celery.*media_processor" 2>/dev/null || true
         pkill -f "uvicorn.*media_processor" 2>/dev/null || true
+        # 等待进程真正退出（最多 10 秒）
+        for i in $(seq 1 10); do
+            if ! pgrep -f "celery.*media_processor" > /dev/null 2>&1 && \
+               ! pgrep -f "uvicorn.*media_processor" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        # 如果还有残留，强制 kill
+        if pgrep -f "celery.*media_processor" > /dev/null 2>&1 || \
+           pgrep -f "uvicorn.*media_processor" > /dev/null 2>&1; then
+            echo -e "${YELLOW}进程未退出，强制终止...${NC}"
+            pkill -9 -f "celery.*media_processor" 2>/dev/null || true
+            pkill -9 -f "uvicorn.*media_processor" 2>/dev/null || true
+            sleep 1
+        fi
         echo -e "${GREEN}已停止${NC}"
         ;;
 
